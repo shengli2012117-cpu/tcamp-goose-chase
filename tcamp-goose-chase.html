@@ -18,9 +18,9 @@ const W = 800, H = 600;
 const GROUND_Y = 500;
 const PLAYER_SIZE = 32;
 const GOOSE_SIZE = 36;
-const BASE_SPEED = 2.2;
-const SPAWN_AHEAD = 1000;   // generate obstacles this far ahead of camera
-const DESPAWN_BEHIND = 600; // remove obstacles this far behind camera
+const BASE_SPEED = 1.8;
+const SPAWN_AHEAD = 1200;
+const DESPAWN_BEHIND = 800;
 
 // --- Game state ---
 let player, goose, camera, gameState, countdownTimer;
@@ -52,9 +52,9 @@ function getRank(dist) {
 // --- Wave pattern: group of 3-5 obstacles, then a breath gap ---
 const OB_TYPES = ['small', 'beam', 'tall', 'small', 'tall', 'beam']; // tall+beam rarer
 function generateWave(lastX, waveIdx) {
-  const baseGap = Math.max(280, 380 - waveIdx * 6); // shrinks over time
-  const waveSize = 3 + Math.floor(Math.random() * 3); // 3-5 obstacles per wave
-  const breathGap = Math.max(400, 600 - waveIdx * 10);
+  const baseGap = Math.max(350, 460 - waveIdx * 4);
+  const waveSize = 2 + Math.floor(Math.random() * 3); // 2-4 obstacles per wave
+  const breathGap = Math.max(500, 720 - waveIdx * 8);
   const obs = [];
   let curX = lastX + breathGap;
 
@@ -65,13 +65,7 @@ function generateWave(lastX, waveIdx) {
     let w = 28, h = 22, y = GROUND_Y - 22;
     if (type === 'tall') { h = 44; y = GROUND_Y - 44; w = 30; }
     if (type === 'beam') { h = 14; y = GROUND_Y - 34; w = 50 + Math.floor(Math.random() * 15); }
-    // Rare pit (2% chance), but only one pit per wave max
-    const isPit = (waveIdx > 3 && Math.random() < 0.02 && !obs.some(o => o.type === 'pit'));
-    if (isPit) {
-      obs.push({ x: curX, y: 0, w: 60 + Math.random() * 20, h: 0, type: 'pit', cleared: false });
-    } else {
-      obs.push({ x: curX, y, w, h, type, cleared: false });
-    }
+    obs.push({ x: curX, y, w, h, type, cleared: false });
     curX += gap;
   }
   return { obstacles: obs, endX: curX };
@@ -84,12 +78,6 @@ function spawnCoinsForObstacles(obs) {
     if (o.type === 'beam') {
       newCoins.push({ x: o.x + 10, y: GROUND_Y - 20, collected: false });
       newCoins.push({ x: o.x + 25, y: GROUND_Y - 20, collected: false });
-    } else if (o.type === 'pit') {
-      // Arc over pit
-      const cx = o.x + o.w / 2;
-      for (let dy = 0; dy < 3; dy++) {
-        newCoins.push({ x: cx - 15 + dy * 15, y: GROUND_Y - 90 - Math.abs(dy - 1) * 25, collected: false });
-      }
     } else {
       // Ground coin before obstacle
       newCoins.push({ x: o.x - 50, y: GROUND_Y - 40, collected: false });
@@ -111,7 +99,7 @@ function reset() {
     jumpHeld: false, jumpsUsed: 0,
     stumble: 0, pitFalling: 0
   };
-  goose = { x: -80, y: GROUND_Y - GOOSE_SIZE, w: GOOSE_SIZE, h: GOOSE_SIZE };
+  goose = { x: -160, y: GROUND_Y - GOOSE_SIZE, w: GOOSE_SIZE, h: GOOSE_SIZE };
   player._lastMilestone = 0;
   camera = { x: 0 };
   gameState = 'waiting';
@@ -214,7 +202,7 @@ function update() {
   const distInHundreds = Math.floor(player.x / 500);
   if (distInHundreds > speedTier) {
     speedTier = distInHundreds;
-    playerSpeed = BASE_SPEED + speedTier * 0.08;
+    playerSpeed = BASE_SPEED + speedTier * 0.04;
     addPopup(player.x, player.y - 40, '加速! ×' + playerSpeed.toFixed(1), '#ffcc00');
   }
 
@@ -365,8 +353,8 @@ function update() {
       if (obs.type === 'beam') { if (player.sliding) continue; oBox = { x: obs.x + 2, y: obs.y + 1, w: obs.w - 4, h: obs.h - 1 }; }
       else { oBox = { x: obs.x + 3, y: obs.y + 2, w: obs.w - 6, h: obs.h - 2 }; }
       if (collides(pBox, oBox)) {
-        player.stumble = 28; player.x = Math.max(100, player.x - 30);
-        player.y = GROUND_Y - player.h; player.vy = -4; player.onGround = false;
+        player.stumble = 18; player.x = Math.max(100, player.x - 20);
+        player.y = GROUND_Y - player.h; player.vy = -3; player.onGround = false;
         runStats.wallHits++;
         spawnParticles(player.x + player.w/2, player.y + player.h, '#ff8844', 12);
         addPopup(player.x, player.y - 20, '哎呀!', '#ff8844');
@@ -378,7 +366,7 @@ function update() {
 
   // Goose rubber-band chase
   const gooseDist = player.x - goose.x;
-  const chaseRatio = 0.88 + Math.min(distanceScore / 12000, 0.12); // 88% → 100% over 12km
+  const chaseRatio = 0.78 + Math.min(distanceScore / 20000, 0.16); // 78% → 94% over 20km
   const gooseSpeed = player.stumble > 0 ? playerSpeed : effectiveSpeed * chaseRatio;
   goose.x += gooseSpeed;
 
