@@ -19,6 +19,7 @@ const GROUND_Y = 500;
 const PLAYER_SIZE = 32;
 const GOOSE_SIZE = 36;
 const BASE_SPEED = 1.8;
+const SPEED_CAP = 3.0;
 const SPAWN_AHEAD = 1200;
 const DESPAWN_BEHIND = 800;
 
@@ -49,50 +50,54 @@ function getRank(dist) {
   return { name: '萌新', color: '#aaa', emoji: '🐣' };
 }
 
-// --- Wave pattern ---
-const OB_TYPES = ['small', 'beam', 'tall', 'small', 'tall', 'beam'];
+// --- Wave pattern: sprint (dense) ⇄ reward (sparse + coins) ---
 function generateWave(lastX, waveIdx) {
-  const baseGap = Math.max(220, 460 - waveIdx * 10);   // shrinks from 460→220
-  const breathGap = Math.max(300, 680 - waveIdx * 12);  // shrinks from 680→300
-  const waveSize = 2 + Math.floor(Math.random() * (2 + Math.floor(waveIdx / 8))); // grows 2-3 → 3-5
+  const isSprint = waveIdx % 3 !== 2; // 2 sprint waves → 1 reward wave
   const obs = [];
-  let curX = lastX + breathGap;
+  let curX, gap, breathGap, count;
+  const isReward = !isSprint;
 
-  // Introduced at 1500m+: tight pairs of small+tall
-  const enablePairs = waveIdx > 8;
-
-  let i = 0;
-  while (i < waveSize) {
-    const gap = baseGap + Math.floor(Math.random() * 60);
-    const types = ['small', 'small', 'small', 'small', 'small', 'tall', 'beam', 'small'];
-    const type = types[Math.floor(Math.random() * types.length)];
-    let w = 28, h = 22, y = GROUND_Y - 22;
-    if (type === 'tall') { h = 44; y = GROUND_Y - 44; w = 30; }
-    if (type === 'beam') { h = 14; y = GROUND_Y - 34; w = 50 + Math.floor(Math.random() * 15); }
-    obs.push({ x: curX, y, w, h, type, cleared: false });
-    curX += gap;
-
-    // Double-trouble pair (1500m+): small immediately followed by tall
-    if (enablePairs && Math.random() < 0.25 && i + 1 < waveSize) {
-      obs.push({ x: curX - gap + 70, y: GROUND_Y - 44, w: 30, h: 44, type: 'tall', cleared: false });
-      i++;
+  if (isSprint) {
+    breathGap = 380;
+    gap = Math.max(240, 400 - waveIdx * 8);
+    count = 3 + Math.floor(Math.random() * (2 + Math.floor(waveIdx / 10)));
+    curX = lastX + breathGap;
+    for (let i = 0; i < count; i++) {
+      const types = ['small','small','small','small','tall','small','beam','small'];
+      const type = types[Math.floor(Math.random()*types.length)];
+      let w=28, h=22, y=GROUND_Y-22;
+      if (type==='tall') { h=44; y=GROUND_Y-44; w=30; }
+      if (type==='beam') { h=14; y=GROUND_Y-34; w=50+Math.floor(Math.random()*15); }
+      obs.push({x:curX, y, w, h, type, cleared:false, reward:false});
+      curX += gap + Math.floor(Math.random()*40);
     }
-    i++;
+  } else {
+    // Reward zone: sparse, extra coins marker
+    breathGap = 600;
+    gap = 500;
+    count = 1 + Math.floor(Math.random()*2);
+    curX = lastX + breathGap;
+    for (let i = 0; i < count; i++) {
+      obs.push({x:curX, y:GROUND_Y-22, w:28, h:22, type:'small', cleared:false, reward:true});
+      curX += gap;
+    }
   }
-  return { obstacles: obs, endX: curX };
+  return { obstacles: obs, endX: curX, reward: isReward };
 }
 
 // --- Spawn coins around a group of obstacles ---
-function spawnCoinsForObstacles(obs) {
+function spawnCoinsForObstacles(obs, isReward) {
   const newCoins = [];
   for (const o of obs) {
-    if (o.type === 'beam') {
+    if (isReward) {
+      for (let dx = -60; dx <= 70; dx += 18) {
+        newCoins.push({ x: o.x + dx, y: GROUND_Y - 40 - Math.abs(dx) * 0.3, collected: false });
+      }
+    } else if (o.type === 'beam') {
       newCoins.push({ x: o.x + 10, y: GROUND_Y - 20, collected: false });
       newCoins.push({ x: o.x + 25, y: GROUND_Y - 20, collected: false });
     } else {
-      // Ground coin before obstacle
       newCoins.push({ x: o.x - 50, y: GROUND_Y - 40, collected: false });
-      // Air coin above obstacle
       newCoins.push({ x: o.x + 5, y: GROUND_Y - (o.type === 'tall' ? 90 : 70), collected: false });
     }
   }
@@ -140,7 +145,7 @@ function reset() {
   for (let w = 0; w < 2; w++) {
     const wave = generateWave(lastObstacleX, generatorIndex);
     obstacles.push(...wave.obstacles);
-    coins.push(...spawnCoinsForObstacles(wave.obstacles));
+    coins.push(...spawnCoinsForObstacles(wave.obstacles, wave.reward));
     lastObstacleX = wave.endX;
     generatorIndex++;
   }
@@ -212,8 +217,10 @@ function update() {
   const distInHundreds = Math.floor(player.x / 500);
   if (distInHundreds > speedTier) {
     speedTier = distInHundreds;
-    playerSpeed = BASE_SPEED + speedTier * 0.10;
-    addPopup(player.x, player.y - 40, '加速! ×' + playerSpeed.toFixed(1), '#ffcc00');
+    playerSpeed = Math.min(SPEED_CAP, BASE_SPEED + speedTier * 0.10);
+    if (playerSpeed < SPEED_CAP - 0.01) {
+      addPopup(player.x, player.y - 40, '加速! ×' + playerSpeed.toFixed(1), '#ffcc00');
+    }
   }
 
   // ---- Procedural generation: ensure obstacles exist ahead ----
@@ -221,7 +228,7 @@ function update() {
   while (lastObstacleX < viewRight) {
     const wave = generateWave(lastObstacleX, generatorIndex);
     obstacles.push(...wave.obstacles);
-    coins.push(...spawnCoinsForObstacles(wave.obstacles));
+    coins.push(...spawnCoinsForObstacles(wave.obstacles, wave.reward));
     lastObstacleX = wave.endX;
     generatorIndex++;
   }
@@ -366,8 +373,11 @@ function update() {
         player.stumble = 18; player.x = Math.max(100, player.x - 20);
         player.y = GROUND_Y - player.h; player.vy = -3; player.onGround = false;
         runStats.wallHits++;
+        // DDA: one mistake drops speed by 2 tiers — gives breathing room
+        speedTier = Math.max(0, speedTier - 2);
+        playerSpeed = Math.min(SPEED_CAP, BASE_SPEED + speedTier * 0.10);
         spawnParticles(player.x + player.w/2, player.y + player.h, '#ff8844', 12);
-        addPopup(player.x, player.y - 20, '哎呀!', '#ff8844');
+        addPopup(player.x, player.y - 20, '降速! ×' + playerSpeed.toFixed(1), '#ff8844');
         break;
       }
     }
@@ -376,7 +386,8 @@ function update() {
 
   // Goose rubber-band chase
   const gooseDist = player.x - goose.x;
-  const chaseRatio = 0.84 + Math.min(distanceScore / 5500, 0.16); // 84% → 100% at 5500m
+  // Goose: 82% at start → 96% at speed cap. Slight gap always remains.
+  const chaseRatio = 0.82 + Math.min(playerSpeed / SPEED_CAP, 1) * 0.14;
   const gooseSpeed = player.stumble > 0 ? playerSpeed : effectiveSpeed * chaseRatio;
   goose.x += gooseSpeed;
 
@@ -449,6 +460,19 @@ function draw() {
   ctx.strokeStyle = '#333360'; ctx.lineWidth = 1;
   for (let gx = Math.floor(visLeft / 80) * 80; gx < visRight; gx += 80) {
     ctx.beginPath(); ctx.moveTo(gx, GROUND_Y + 4); ctx.lineTo(gx, GROUND_Y + 4 + ((gx / 80) % 3 === 0 ? 24 : 12)); ctx.stroke();
+  }
+
+  // Reward zone ground glow
+  for (const obs of obstacles) {
+    if (obs.reward && obs.x + obs.w > visLeft && obs.x < visRight) {
+      const rl = Math.max(visLeft, obs.x - 70), rr = Math.min(visRight, obs.x + obs.w + 70);
+      const grd = ctx.createLinearGradient(0, GROUND_Y, 0, GROUND_Y + 20);
+      grd.addColorStop(0, '#ffd70022'); grd.addColorStop(1, 'transparent');
+      ctx.fillStyle = grd; ctx.fillRect(rl, GROUND_Y, rr - rl, 20);
+      ctx.fillStyle = '#ffcc00';
+      ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
+      ctx.fillText('🎁 奖励区 🎁', obs.x + obs.w/2, GROUND_Y - 18);
+    }
   }
 
   // Obstacles
@@ -570,7 +594,8 @@ function draw() {
   ctx.fillStyle = '#ffcc00'; ctx.font = 'bold 24px monospace'; ctx.textAlign = 'left';
   ctx.fillText('⭐ ' + score + '  (' + distanceScore + 'm)', 16, 34);
   ctx.fillStyle = '#ffd700'; ctx.font = 'bold 13px monospace';
-  ctx.fillText('💰 ' + coinCount + '  |  速度 ' + playerSpeed.toFixed(1) + 'x', 16, 52);
+  const atCap = playerSpeed >= SPEED_CAP - 0.01;
+  ctx.fillText('💰 ' + coinCount + '  |  速度 ' + playerSpeed.toFixed(1) + 'x' + (atCap ? ' 🔒MAX' : ''), 16, 52);
 
   // Goose distance (prominent)
   const gap = Math.floor(player.x - goose.x);
