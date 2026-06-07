@@ -414,40 +414,58 @@ function update() {
   if (camera.x < 0) camera.x = 0;
   if (camera.x > MAP_WIDTH - W) camera.x = MAP_WIDTH - W;
 
-  // Collision with obstacles
-  if (player.invincible <= 0) {
-  for (const obs of obstacles) {
-    if (obs.type === 'pit') continue;
-    const margin = 6;
-    const pBox = { x: player.x + margin, y: player.y + margin, w: player.w - margin*2, h: player.h - margin*2 };
-    let oBox;
-    if (obs.type === 'beam') {
-      if (player.sliding) continue;
-      oBox = { x: obs.x + 2, y: obs.y + 1, w: obs.w - 4, h: obs.h - 1 };
-    } else {
-      oBox = { x: obs.x + 3, y: obs.y + 2, w: obs.w - 6, h: obs.h - 2 };
-    }
-    if (collides(pBox, oBox)) {
-      spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 30);
-      saveHighScore();
-      gameState = 'over'; return;
-    }
-  }
-  } // end invincible guard
-
-  // Goose collision — 3 hits before death
+  // ===== UNIFIED 3-HIT SYSTEM =====
+  // Obstacle hit → push back +1 hit. Goose hit → push back + recoil goose +1 hit.
+  // 3 total hits = death. Pits = instant death (always).
   if (player.gooseHitCooldown <= 0) {
-    const pMargin = 4, gMargin = 4;
-    const pBox2 = { x: player.x + pMargin, y: player.y + pMargin, w: player.w - pMargin*2, h: player.h - pMargin*2 };
-    const gBox = { x: goose.x + gMargin, y: goose.y + 3, w: goose.w - gMargin*2, h: goose.h - 3 };
-    if (collides(pBox2, gBox)) {
-      player.gooseHitCooldown = 50;
-      player.invincible = 40; // brief safety after pushback
+    let hitThisFrame = false;
+    let hitType = '';
+
+    // Check obstacle collisions
+    if (player.invincible <= 0) {
+      for (const obs of obstacles) {
+        if (obs.type === 'pit') continue;
+        const margin = 6;
+        const pBox = { x: player.x + margin, y: player.y + margin, w: player.w - margin*2, h: player.h - margin*2 };
+        let oBox;
+        if (obs.type === 'beam') {
+          if (player.sliding) continue;
+          oBox = { x: obs.x + 2, y: obs.y + 1, w: obs.w - 4, h: obs.h - 1 };
+        } else {
+          oBox = { x: obs.x + 3, y: obs.y + 2, w: obs.w - 6, h: obs.h - 2 };
+        }
+        if (collides(pBox, oBox)) {
+          hitThisFrame = true;
+          hitType = 'obs';
+          break;
+        }
+      }
+    }
+
+    // Check goose collision
+    if (!hitThisFrame) {
+      const pMargin = 4, gMargin = 4;
+      const pBox2 = { x: player.x + pMargin, y: player.y + pMargin, w: player.w - pMargin*2, h: player.h - pMargin*2 };
+      const gBox = { x: goose.x + gMargin, y: goose.y + 3, w: goose.w - gMargin*2, h: goose.h - 3 };
+      if (collides(pBox2, gBox)) {
+        hitThisFrame = true;
+        hitType = 'goose';
+      }
+    }
+
+    if (hitThisFrame) {
+      player.gooseHitCooldown = 55;
+      player.invincible = 40;
       player.gooseHits++;
-      player.x = Math.max(100, player.x - 160); // push back
-      goose.x = Math.max(-500, goose.x - 90);   // goose also recoils
+      player.x = Math.max(100, player.x - 180);
+      if (hitType === 'goose') {
+        goose.x = Math.max(-500, goose.x - 110);
+        addPopup(player.x, player.y - 30, '被鹅撞了! ' + player.gooseHits + '/3', '#ff4444');
+      } else {
+        addPopup(player.x, player.y - 30, '撞到障碍! ' + player.gooseHits + '/3', '#ff8800');
+      }
       spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 20);
-      addPopup(player.x, player.y - 30, '被鹅撞了! ' + player.gooseHits + '/3', '#ff4444');
+
       if (player.gooseHits >= 3) {
         spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 50);
         saveHighScore(); gameState = 'over'; return;
@@ -690,7 +708,7 @@ function draw() {
     var dbg = [];
     dbg.push('无敌:' + player.invincible);
     dbg.push('滑铲:' + (player.sliding?'是':'否') + ' ' + player.slideTimer);
-    dbg.push('鹅撞击:' + player.gooseHits + '/3  CD:' + player.gooseHitCooldown);
+    dbg.push('撞击:' + player.gooseHits + '/3  CD:' + player.gooseHitCooldown);
     ctx.fillText(dbg.join('  |  '), W - 16, 72);
   }
 
