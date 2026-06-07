@@ -19,7 +19,7 @@ const GROUND_Y = 500;
 const PLAYER_SIZE = 32;
 const GOOSE_SIZE = 36;
 const PORTAL_SIZE = 44;
-const MAP_WIDTH = 4200;
+const MAP_WIDTH = 7800;
 const BASE_SPEED = 2.0;
 const SPEED_BOOST_PER_TIER = 0.25;
 let playerSpeed = BASE_SPEED;
@@ -49,6 +49,7 @@ function reset() {
   spaceWasDown = false;
 
   obstacles = [
+    // --- 前半段 (0 – 4200) ---
     { x: 600,  y: GROUND_Y - 22, w: 28, h: 22, type: 'small', cleared: false },
     { x: 950,  y: GROUND_Y - 46, w: 50, h: 14, type: 'beam',  cleared: false },
     { x: 1300, y: GROUND_Y - 44, w: 30, h: 44, type: 'tall',  cleared: false },
@@ -59,9 +60,24 @@ function reset() {
     { x: 3200, y: GROUND_Y - 22, w: 28, h: 22, type: 'small', cleared: false },
     { x: 3550, y: GROUND_Y - 46, w: 50, h: 14, type: 'beam',  cleared: false },
     { x: 3850, y: 0,               w: 65, h: 0,  type: 'pit',   cleared: false },
+    // --- 后半段 (4200 – 7800) ---
+    { x: 4300, y: GROUND_Y - 22, w: 28, h: 22, type: 'small', cleared: false },
+    { x: 4650, y: GROUND_Y - 46, w: 55, h: 14, type: 'beam',  cleared: false },
+    { x: 5000, y: GROUND_Y - 44, w: 30, h: 44, type: 'tall',  cleared: false },
+    { x: 5400, y: 0,               w: 75, h: 0,  type: 'pit',   cleared: false },
+    { x: 5850, y: GROUND_Y - 22, w: 28, h: 22, type: 'small', cleared: false },
+    { x: 6200, y: GROUND_Y - 46, w: 50, h: 14, type: 'beam',  cleared: false },
+    { x: 6550, y: GROUND_Y - 44, w: 30, h: 44, type: 'tall',  cleared: false },
+    { x: 6900, y: 0,               w: 65, h: 0,  type: 'pit',   cleared: false },
+    // 冲刺区 — 密集连跳,考验操作!
+    { x: 7200, y: GROUND_Y - 22, w: 28, h: 22, type: 'small', cleared: false },
+    { x: 7350, y: GROUND_Y - 22, w: 28, h: 22, type: 'small', cleared: false },
+    { x: 7500, y: GROUND_Y - 44, w: 30, h: 44, type: 'tall',  cleared: false },
+    { x: 7650, y: GROUND_Y - 46, w: 55, h: 14, type: 'beam',  cleared: false },
   ];
 
   coins = [
+    // ===== 前半段 =====
     { x: 380,  y: GROUND_Y - 50, collected: false },
     { x: 750,  y: GROUND_Y - 40, collected: false },
     { x: 800,  y: GROUND_Y - 40, collected: false },
@@ -93,6 +109,41 @@ function reset() {
     { x: 3875, y: GROUND_Y - 90,  collected: false },
     { x: 3900, y: GROUND_Y - 115, collected: false },
     { x: 3925, y: GROUND_Y - 90,  collected: false },
+    // ===== 后半段地面金币 =====
+    { x: 4150, y: GROUND_Y - 40, collected: false },
+    { x: 4450, y: GROUND_Y - 40, collected: false },
+    { x: 4500, y: GROUND_Y - 40, collected: false },
+    { x: 4800, y: GROUND_Y - 40, collected: false },
+    { x: 5150, y: GROUND_Y - 40, collected: false },
+    { x: 5550, y: GROUND_Y - 40, collected: false },
+    { x: 5600, y: GROUND_Y - 40, collected: false },
+    { x: 6000, y: GROUND_Y - 40, collected: false },
+    { x: 6350, y: GROUND_Y - 40, collected: false },
+    { x: 6700, y: GROUND_Y - 40, collected: false },
+    { x: 6750, y: GROUND_Y - 40, collected: false },
+    { x: 7100, y: GROUND_Y - 40, collected: false },
+    // ===== 后半段空中金币 =====
+    { x: 4310, y: GROUND_Y - 70, collected: false },
+    { x: 5010, y: GROUND_Y - 90, collected: false },
+    { x: 5860, y: GROUND_Y - 70, collected: false },
+    { x: 6560, y: GROUND_Y - 90, collected: false },
+    { x: 7210, y: GROUND_Y - 70, collected: false },
+    { x: 7360, y: GROUND_Y - 70, collected: false },
+    { x: 7510, y: GROUND_Y - 90, collected: false },
+    // ===== 后半段滑铲金币 =====
+    { x: 4665, y: GROUND_Y - 20, collected: false },
+    { x: 4685, y: GROUND_Y - 20, collected: false },
+    { x: 6215, y: GROUND_Y - 20, collected: false },
+    { x: 6235, y: GROUND_Y - 20, collected: false },
+    { x: 7665, y: GROUND_Y - 20, collected: false },
+    { x: 7685, y: GROUND_Y - 20, collected: false },
+    // ===== 后半段深坑弧线 =====
+    { x: 5425, y: GROUND_Y - 90,  collected: false },
+    { x: 5450, y: GROUND_Y - 115, collected: false },
+    { x: 5475, y: GROUND_Y - 90,  collected: false },
+    { x: 6925, y: GROUND_Y - 90,  collected: false },
+    { x: 6950, y: GROUND_Y - 115, collected: false },
+    { x: 6975, y: GROUND_Y - 90,  collected: false },
   ];
 
   portal = { x: MAP_WIDTH - 80, y: GROUND_Y - PORTAL_SIZE, w: PORTAL_SIZE, h: PORTAL_SIZE, glow: 0 };
