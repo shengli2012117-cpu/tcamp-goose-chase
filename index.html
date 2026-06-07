@@ -49,24 +49,35 @@ function getRank(dist) {
   return { name: '萌新', color: '#aaa', emoji: '🐣' };
 }
 
-// --- Wave pattern: group of 3-5 obstacles, then a breath gap ---
-const OB_TYPES = ['small', 'beam', 'tall', 'small', 'tall', 'beam']; // tall+beam rarer
+// --- Wave pattern ---
+const OB_TYPES = ['small', 'beam', 'tall', 'small', 'tall', 'beam'];
 function generateWave(lastX, waveIdx) {
-  const baseGap = Math.max(350, 460 - waveIdx * 4);
-  const waveSize = 2 + Math.floor(Math.random() * 3); // 2-4 obstacles per wave
-  const breathGap = Math.max(500, 720 - waveIdx * 8);
+  const baseGap = Math.max(220, 460 - waveIdx * 10);   // shrinks from 460→220
+  const breathGap = Math.max(300, 680 - waveIdx * 12);  // shrinks from 680→300
+  const waveSize = 2 + Math.floor(Math.random() * (2 + Math.floor(waveIdx / 8))); // grows 2-3 → 3-5
   const obs = [];
   let curX = lastX + breathGap;
 
-  for (let i = 0; i < waveSize; i++) {
-    const gap = baseGap + Math.floor(Math.random() * 80);
-    const types = ['small', 'small', 'small', 'small', 'tall', 'small', 'beam', 'small'];
+  // Introduced at 1500m+: tight pairs of small+tall
+  const enablePairs = waveIdx > 8;
+
+  let i = 0;
+  while (i < waveSize) {
+    const gap = baseGap + Math.floor(Math.random() * 60);
+    const types = ['small', 'small', 'small', 'small', 'small', 'tall', 'beam', 'small'];
     const type = types[Math.floor(Math.random() * types.length)];
     let w = 28, h = 22, y = GROUND_Y - 22;
     if (type === 'tall') { h = 44; y = GROUND_Y - 44; w = 30; }
     if (type === 'beam') { h = 14; y = GROUND_Y - 34; w = 50 + Math.floor(Math.random() * 15); }
     obs.push({ x: curX, y, w, h, type, cleared: false });
     curX += gap;
+
+    // Double-trouble pair (1500m+): small immediately followed by tall
+    if (enablePairs && Math.random() < 0.25 && i + 1 < waveSize) {
+      obs.push({ x: curX - gap + 70, y: GROUND_Y - 44, w: 30, h: 44, type: 'tall', cleared: false });
+      i++;
+    }
+    i++;
   }
   return { obstacles: obs, endX: curX };
 }
@@ -201,7 +212,7 @@ function update() {
   const distInHundreds = Math.floor(player.x / 500);
   if (distInHundreds > speedTier) {
     speedTier = distInHundreds;
-    playerSpeed = BASE_SPEED + speedTier * 0.04;
+    playerSpeed = BASE_SPEED + speedTier * 0.10;
     addPopup(player.x, player.y - 40, '加速! ×' + playerSpeed.toFixed(1), '#ffcc00');
   }
 
@@ -365,7 +376,7 @@ function update() {
 
   // Goose rubber-band chase
   const gooseDist = player.x - goose.x;
-  const chaseRatio = 0.78 + Math.min(distanceScore / 20000, 0.16); // 78% → 94% over 20km
+  const chaseRatio = 0.84 + Math.min(distanceScore / 5500, 0.16); // 84% → 100% at 5500m
   const gooseSpeed = player.stumble > 0 ? playerSpeed : effectiveSpeed * chaseRatio;
   goose.x += gooseSpeed;
 
@@ -401,20 +412,30 @@ function submitLeaderboard() {
 // ===================== RENDER =====================
 function draw() {
   ctx.clearRect(0, 0, W, H);
-  // Sky
-  const sky = ctx.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#0a0a1a'); sky.addColorStop(0.5, '#1a1a3e'); sky.addColorStop(1, '#3a2a5c');
+  // Sky — shifts color palette every 1500m
+  const skyTheme = Math.floor(distanceScore / 1500);
+  const themes = [
+    { top: '#0a0a1a', mid: '#1a1a3e', bot: '#3a2a5c', stars: '#ffffff33', mountain: '#1e1e3a' },   // 深夜 0-1500m
+    { top: '#1a1030', mid: '#2a1a4e', bot: '#4a3060', stars: '#ffffff33', mountain: '#2a1e4a' },   // 紫夜 1500-3000m
+    { top: '#0a2a4a', mid: '#1a3a5e', bot: '#3a5a7c', stars: '#ffffff22', mountain: '#1e3a5a' },   // 黎明 3000-4500m
+    { top: '#3a1a2a', mid: '#5a2a4a', bot: '#7a3a5a', stars: '#ffffff33', mountain: '#4a1e3a' },   // 赤夜 4500-6000m
+    { top: '#0a0a2a', mid: '#1a1a5a', bot: '#2a2a8a', stars: '#ffffff44', mountain: '#1a1a5a' },   // 极夜 6000m+
+  ];
+  const th = themes[skyTheme % themes.length];
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, th.top); sky.addColorStop(0.5, th.mid); sky.addColorStop(1, th.bot);
   ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
 
   // Parallax stars (tileable)
   ctx.save(); ctx.translate(-(camera.x * 0.3 % 800), 0);
-  ctx.fillStyle = '#ffffff33';
+  ctx.fillStyle = th.stars;
   for (let i = 0; i < 60; i++) ctx.fillRect(((i * 137 + 42) % 800), ((i * 251 + 42) % (GROUND_Y - 60)), 2, 2);
   for (let i = 0; i < 60; i++) ctx.fillRect(((i * 137 + 42) % 800) + 800, ((i * 251 + 42) % (GROUND_Y - 60)), 2, 2);
   ctx.restore();
 
   // Parallax mountains (tileable)
   ctx.save(); ctx.translate(-(camera.x * 0.5 % 1000), 0);
-  ctx.fillStyle = '#1e1e3a';
+  ctx.fillStyle = th.mountain;
   for (let i = 0; i < 10; i++) { const mx = i * 500; ctx.beginPath(); ctx.moveTo(mx - 120, GROUND_Y); ctx.lineTo(mx + 60, GROUND_Y - 180); ctx.lineTo(mx + 240, GROUND_Y); ctx.fill(); }
   ctx.restore();
 
