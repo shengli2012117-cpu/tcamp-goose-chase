@@ -41,7 +41,7 @@ function reset() {
     x: 100, y: GROUND_Y - PLAYER_SIZE, w: PLAYER_SIZE, h: PLAYER_SIZE,
     vy: 0, onGround: true, runFrame: 0, coyoteTimer: 0,
     doubleJumped: false,
-    sliding: false, slideTimer: 0,
+    sliding: false, slideTimer: 0, holdingSlide: false,
     jumpHeld: false, jumpsUsed: 0, // 0=no jump yet, 1=one jump used, 2=both jumps used
     gooseHits: 0, gooseHitCooldown: 0, invincible: 0,
     pitFalling: 0
@@ -256,11 +256,15 @@ function update() {
   }
 
   // ---- Slide ----
-  const wantSlide = (keys['s'] || keys['S']) && player.onGround && !player.sliding;
-  if (wantSlide) { player.sliding = true; player.slideTimer = 22; }
+  const sDown = (keys['s'] || keys['S']);
+  const wantSlide = sDown && player.onGround && !player.sliding;
+  if (wantSlide) { player.sliding = true; player.slideTimer = 36; }
+  player.holdingSlide = sDown;
   if (player.sliding) {
     player.slideTimer--;
     player.h = 16; player.y = GROUND_Y - player.h;
+    // Keep sliding as long as S is held
+    if (player.holdingSlide && player.slideTimer < 6) player.slideTimer = 6;
     if (player.slideTimer <= 0) { player.sliding = false; player.h = PLAYER_SIZE; player.y = GROUND_Y - player.h; }
   } else if (player.onGround) {
     player.h = PLAYER_SIZE;
@@ -683,7 +687,11 @@ function draw() {
   // Jump-state debug (top-right)
   if (gameState === 'playing') {
     ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = '11px monospace'; ctx.textAlign = 'right';
-    ctx.fillText(`跳跃:${player.jumpsUsed}/2  缓冲:${jumpRequested}`, W - 16, 72);
+    var dbg = [];
+    dbg.push('无敌:' + player.invincible);
+    dbg.push('滑铲:' + (player.sliding?'是':'否') + ' ' + player.slideTimer);
+    dbg.push('鹅撞击:' + player.gooseHits + '/3  CD:' + player.gooseHitCooldown);
+    ctx.fillText(dbg.join('  |  '), W - 16, 72);
   }
 
   const gooseDist = goose.x - player.x;
