@@ -71,8 +71,8 @@ function generateWave(lastX, waveIdx) {
       const type = types[Math.floor(Math.random()*types.length)];
       let w=28, h=22, y=GROUND_Y-22;
       if (type==='tall') { h=44; y=GROUND_Y-44; w=30; }
-      else if (type==='beam') { h=14; y=GROUND_Y-34; w=50+Math.floor(Math.random()*15); }
-      else if (type==='widebeam') { h=14; y=GROUND_Y-34; w=80+Math.floor(Math.random()*20); }
+      else if (type==='beam') { h=140; y=GROUND_Y-160; w=50+Math.floor(Math.random()*15); }
+      else if (type==='widebeam') { h=140; y=GROUND_Y-160; w=80+Math.floor(Math.random()*20); }
       obs.push({x:curX, y, w, h, type, cleared:false, reward:false});
       curX += gap + Math.floor(Math.random()*40);
     }
@@ -540,13 +540,16 @@ function draw() {
       ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(obs.x + 2, obs.y + 2, obs.w, obs.h);
       ctx.fillStyle = '#7b1fa2'; ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
       ctx.strokeStyle = '#e040fb'; ctx.lineWidth = 2; ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
-      ctx.fillStyle = '#4a0072'; const bsw = 8;
-      for (let sx = obs.x; sx < obs.x + obs.w; sx += bsw * 2) ctx.fillRect(sx, obs.y, Math.min(bsw, obs.x + obs.w - sx), obs.h);
+      const bw = obs.w, by = obs.y, bh = obs.h, crawlGap = GROUND_Y - by - bh;
+      ctx.fillStyle = '#4a148c'; ctx.fillRect(obs.x, by, bw, bh);
+      ctx.strokeStyle = '#e040fb'; ctx.lineWidth = 2; ctx.strokeRect(obs.x, by, bw, bh);
+      ctx.fillStyle = '#6a1b9a';
+      for (let sy = by; sy < by + bh; sy += 18) { if ((Math.floor((sy-by)/18)%2)===0) ctx.fillRect(obs.x+4,sy,bw-8,12); }
       ctx.fillStyle = '#e040fb';
-      for (let sx = obs.x + 5; sx < obs.x + obs.w - 5; sx += 12) {
-        ctx.beginPath(); ctx.moveTo(sx, obs.y + obs.h); ctx.lineTo(sx + 4, obs.y + obs.h + 10); ctx.lineTo(sx + 8, obs.y + obs.h); ctx.fill();
-      }
-      ctx.fillStyle = '#e040fb'; ctx.font = '12px monospace'; ctx.textAlign = 'center'; ctx.fillText('↓ 滑铲', obs.x + obs.w/2, obs.y - 5);
+      for (let sx = obs.x+5; sx < obs.x+bw-5; sx += 10) { ctx.beginPath(); ctx.moveTo(sx,by+bh); ctx.lineTo(sx+5,by+bh+12); ctx.lineTo(sx+10,by+bh); ctx.fill(); }
+      ctx.fillStyle = '#e040fb'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center';
+      ctx.fillText('S 滑铲', obs.x+bw/2, by+bh+22);
+      ctx.fillStyle = '#e040fb22'; ctx.fillRect(obs.x, GROUND_Y-crawlGap, bw, crawlGap);
     } else {
       const isTall = obs.type === 'tall';
       ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(obs.x + 3, obs.y + 3, obs.w, obs.h);
