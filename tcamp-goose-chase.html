@@ -32,7 +32,22 @@ let particles, popups, trailParticles;
 let combo, screenShake, highScore;
 let playerSpeed;
 
+// --- Run statistics ---
+let runStats = {}; // { jumps, maxCombo, jumpsUsed, wallHits, pitsFallen, coinsCollected }
+let leaderboard = []; // [{ name, score, dist, date }]
+let leaderboardState = 'hidden'; // 'hidden' | 'input' | 'shown'
+let lbNameInput = '';
+
 try { highScore = parseInt(localStorage.getItem('tcampHighScore')) || 0; } catch(e) { highScore = 0; }
+try { leaderboard = JSON.parse(localStorage.getItem('tcampLB') || '[]'); } catch(e) { leaderboard = []; }
+
+function getRank(dist) {
+  if (dist >= 5000) return { name: '传说', color: '#ff4444', emoji: '👑' };
+  if (dist >= 3000) return { name: '大师', color: '#e040fb', emoji: '💎' };
+  if (dist >= 1500) return { name: '达人', color: '#42a5f5', emoji: '⭐' };
+  if (dist >= 500)  return { name: '跑者', color: '#4caf50', emoji: '🏃' };
+  return { name: '萌新', color: '#aaa', emoji: '🐣' };
+}
 
 // --- Wave pattern: group of 3-5 obstacles, then a breath gap ---
 const OB_TYPES = ['small', 'beam', 'tall', 'small', 'tall', 'beam']; // tall+beam rarer
@@ -117,6 +132,10 @@ function reset() {
   particles = [];
   popups = [];
   trailParticles = [];
+  leaderboardState = 'hidden';
+  lbNameInput = '';
+
+  runStats = { jumps: 0, maxCombo: 0, wallHits: 0, pitsFallen: 0, coinsCollected: 0, dist: 0 };
 
   // Pre-generate first 2 waves
   for (let w = 0; w < 2; w++) {
@@ -140,6 +159,23 @@ function spawnParticles(x, y, color, count) {
 // ===================== INPUT =====================
 const keys = {};
 window.addEventListener('keydown', e => {
+  // Leaderboard name input
+  if (gameState === 'over' && leaderboardState === 'input') {
+    if (e.key === 'r' || e.key === 'R') { reset(); e.preventDefault(); return; }
+    if (e.key === 'Enter') {
+      submitLeaderboard();
+      leaderboardState = 'shown';
+      e.preventDefault(); return;
+    }
+    if (e.key === 'Escape') { leaderboardState = 'hidden'; e.preventDefault(); return; }
+    if (e.key === 'Backspace') { lbNameInput = lbNameInput.slice(0, -1); e.preventDefault(); return; }
+    if (e.key.length === 1 && lbNameInput.length < 12) { lbNameInput += e.key; e.preventDefault(); return; }
+    e.preventDefault(); return;
+  }
+
+  // Can always reset
+  if (e.key === 'r' || e.key === 'R') { reset(); e.preventDefault(); return; }
+
   keys[e.key] = true;
   if (e.key === 'r' || e.key === 'R') reset();
   if (gameState === 'waiting' && (e.key === ' ' || e.key === 'Space')) { gameState = 'countdown'; countdownTimer = 90; }
@@ -233,6 +269,7 @@ function update() {
       spawnParticles(player.x + player.w/2, player.y + player.h, '#fff', 12);
       addPopup(player.x, player.y - 20, '二段跳!', '#90caf9');
     }
+    runStats.jumps++;
   }
 
   if (!player.jumpHeld && player.vy < -3) player.vy = -3;
@@ -260,6 +297,7 @@ function update() {
     const pHoriz = player.x + player.w > obs.x && player.x < obs.x + obs.w;
     if (pHoriz && player.y >= GROUND_Y - player.h && player.vy >= 0 && player.pitFalling === 0) {
       player.pitFalling = 45; player.vy = 0;
+      runStats.pitsFallen++;
     }
   }
 
@@ -269,6 +307,7 @@ function update() {
     const cBox = { x: coin.x - 8, y: coin.y - 8, w: 16, h: 16 };
     if (collides(player, cBox)) {
       coin.collected = true; coinScore += 10; coinCount++;
+      runStats.coinsCollected++;
       addPopup(coin.x, coin.y - 10, '+10', '#ffcc00');
       spawnParticles(coin.x, coin.y, '#ffd700', 6);
     }
@@ -280,6 +319,7 @@ function update() {
     if (obs.type === 'pit') { if (player.x > obs.x + obs.w + 40) obs.cleared = true; continue; }
     if (player.x > obs.x + obs.w + 40) {
       obs.cleared = true; combo++;
+      if (combo > runStats.maxCombo) runStats.maxCombo = combo;
       let bonus = 0, msg = '';
       if (combo >= 7)      { bonus = combo * 10; msg = combo + 'x Combo! 🔥'; }
       else if (combo >= 4) { bonus = combo * 6;  msg = combo + 'x Combo!'; }
@@ -327,6 +367,7 @@ function update() {
       if (collides(pBox, oBox)) {
         player.stumble = 28; player.x = Math.max(100, player.x - 30);
         player.y = GROUND_Y - player.h; player.vy = -4; player.onGround = false;
+        runStats.wallHits++;
         spawnParticles(player.x + player.w/2, player.y + player.h, '#ff8844', 12);
         addPopup(player.x, player.y - 20, '哎呀!', '#ff8844');
         break;
@@ -346,7 +387,29 @@ function update() {
   if (gooseDist < 8) { spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 50); saveHighScore(); gameState = 'over'; return; }
 }
 
-function saveHighScore() { if (score > highScore) { highScore = score; try { localStorage.setItem('tcampHighScore', highScore); } catch(e) {} } }
+function saveHighScore() {
+  runStats.dist = distanceScore;
+  if (score > highScore) { highScore = score; try { localStorage.setItem('tcampHighScore', highScore); } catch(e) {} }
+  // If run was too short, just show simple over screen
+  if (distanceScore < 50) { leaderboardState = 'hidden'; return; }
+  // Check if qualifies for leaderboard entry
+  const minQualify = leaderboard.length < 10 ? -1 : (leaderboard[leaderboard.length-1]||{dist:-1}).dist;
+  if (distanceScore > minQualify) {
+    leaderboardState = 'input';
+    lbNameInput = '';
+  } else {
+    leaderboardState = 'shown'; // show leaderboard, no input needed
+  }
+}
+
+function submitLeaderboard() {
+  const name = lbNameInput.trim() || '无名';
+  leaderboard.push({ name, score, dist: distanceScore, date: new Date().toLocaleDateString() });
+  leaderboard.sort((a, b) => b.dist - a.dist);
+  leaderboard = leaderboard.slice(0, 10);
+  try { localStorage.setItem('tcampLB', JSON.stringify(leaderboard)); } catch(e) {}
+  leaderboardState = 'shown';
+}
 
 // ===================== RENDER =====================
 function draw() {
@@ -553,16 +616,196 @@ function draw() {
     ctx.fillText(sec, W / 2, H / 2);
   }
   if (gameState === 'over') {
-    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#e53935'; ctx.font = 'bold 48px monospace'; ctx.textAlign = 'center';
-    ctx.fillText('GAME OVER', W / 2, H / 2 - 55);
-    ctx.fillStyle = '#ffcc00'; ctx.font = 'bold 22px monospace';
-    ctx.fillText('得分: ' + score + '  |  跑了 ' + distanceScore + 'm', W / 2, H / 2 - 10);
-    if (score >= highScore && score > 0) { ctx.fillStyle = '#ffd700'; ctx.font = 'bold 18px monospace'; ctx.fillText('🏆 新纪录! 🏆', W / 2, H / 2 + 20); }
-    ctx.fillStyle = '#fff'; ctx.font = '13px monospace';
-    ctx.fillText('金币 ' + coinCount + '  |  速度 ' + playerSpeed.toFixed(1) + 'x  |  连击 ' + combo + 'x', W / 2, H / 2 + 48);
-    ctx.font = '18px monospace'; ctx.fillText('按 R 键重新挑战', W / 2, H / 2 + 80);
+    drawGameOver();
   }
+}
+
+function drawGameOver() {
+  var isNewRecord = (score >= highScore && score > 0);
+  var rank = getRank(distanceScore);
+  var yOffset = 0;
+
+  // Check if we need more vertical space for leaderboard
+  var showLB = leaderboardState !== 'hidden';
+
+  // Dark overlay
+  ctx.fillStyle = 'rgba(0,0,0,0.78)';
+  ctx.fillRect(0, 0, W, H);
+
+  if (showLB) {
+    // Scrollable card layout
+    yOffset = 0;
+    // ====== GIANT DISTANCE ======
+    ctx.fillStyle = '#ffcc00';
+    ctx.font = 'bold 72px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(distanceScore + 'm', W / 2, 90);
+
+    // Subtitle
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 20px monospace';
+    ctx.fillText('你跑了', W / 2, 60);
+
+    // Rank badge
+    ctx.fillStyle = rank.color;
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText(rank.emoji + ' ' + rank.name + '段位 ' + rank.emoji, W / 2, 112);
+
+    // Score line
+    ctx.fillStyle = '#ffcc00';
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText('⭐ ' + score + '分', W / 2, 132);
+
+    if (isNewRecord) {
+      ctx.fillStyle = '#ffd700';
+      ctx.font = 'bold 16px monospace';
+      ctx.fillText('🏆 新纪录! 🏆', W / 2, 152);
+    }
+
+    // ====== STATS ROW ======
+    var statsY = isNewRecord ? 172 : 150;
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(40, statsY, W - 80, 56);
+
+    ctx.font = '13px monospace';
+    statsY += 18;
+    // Left column
+    ctx.fillStyle = '#aaa'; ctx.textAlign = 'left';
+    ctx.fillText('最高连击', 60, statsY);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(runStats.maxCombo + 'x', 60, statsY + 18);
+
+    ctx.fillStyle = '#aaa';
+    ctx.fillText('跳跃次数', 190, statsY);
+    ctx.fillStyle = '#fff';
+    ctx.fillText('' + runStats.jumps, 190, statsY + 18);
+
+    ctx.fillStyle = '#aaa';
+    ctx.fillText('收集金币', 320, statsY);
+    ctx.fillStyle = '#fff';
+    ctx.fillText('' + runStats.coinsCollected, 320, statsY + 18);
+
+    // Right column
+    ctx.fillStyle = '#aaa';
+    ctx.fillText('撞墙', 450, statsY);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(runStats.wallHits + '次', 450, statsY + 18);
+
+    ctx.fillStyle = '#aaa';
+    ctx.fillText('掉坑', 550, statsY);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(runStats.pitsFallen + '次', 550, statsY + 18);
+
+    ctx.fillStyle = '#aaa';
+    ctx.fillText('速度', 680, statsY);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(playerSpeed.toFixed(1) + 'x', 680, statsY + 18);
+
+    // ====== LEADERBOARD ======
+    var lbY = statsY + 50;
+    ctx.fillStyle = '#ffcc00';
+    ctx.font = 'bold 16px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('🏆 排行榜 (Top 10)', W / 2, lbY);
+    lbY += 18;
+
+    // Draw leaderboard entries or empty state
+    var entryH = 20;
+    if (leaderboard.length === 0) {
+      ctx.fillStyle = '#666';
+      ctx.font = '13px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('(暂无记录 — 等你上榜!)', W / 2, lbY + entryH);
+    }
+    for (var i = 0; i < leaderboard.length; i++) {
+      var e = leaderboard[i];
+      var ey = lbY + i * entryH;
+      var medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1) + '.';
+      ctx.textAlign = 'left';
+      ctx.fillStyle = i < 3 ? '#ffcc00' : '#ccc';
+      ctx.font = '13px monospace';
+      ctx.fillText(medal, 60, ey);
+      ctx.fillText(e.name || '???', 110, ey);
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'right';
+      ctx.fillText(e.dist + 'm', W - 160, ey);
+      ctx.fillStyle = '#888';
+      ctx.fillText(e.score + '分', W - 60, ey);
+    }
+
+    var finalY = lbY + Math.max(leaderboard.length, 1) * entryH + 24;
+
+    // Name input if qualifying
+    if (leaderboardState === 'input') {
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(W / 2 - 160, finalY - 20, 320, 50);
+      ctx.fillStyle = '#ffcc00';
+      ctx.font = 'bold 15px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('上榜! 输入名字:', W / 2, finalY);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 20px monospace';
+      ctx.fillText((lbNameInput || '___') + (Date.now() % 800 < 400 ? '|' : ''), W / 2, finalY + 22);
+      ctx.fillStyle = '#888';
+      ctx.font = '11px monospace';
+      ctx.fillText('Enter确认  Esc跳过', W / 2, finalY + 38);
+      finalY += 48;
+    }
+
+    // Restart hint
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('按 R 重新挑战', W / 2, finalY + 10);
+    return;
+  }
+
+  // ===== Compact mode (no leaderboard, just stats + rank) =====
+  // GIANT DISTANCE — centered, huge
+  ctx.fillStyle = '#ffcc00';
+  ctx.font = 'bold 80px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(distanceScore + 'm', W / 2, H / 2 - 10);
+
+  // "你跑了"
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 18px monospace';
+  ctx.fillText('你跑了', W / 2, H / 2 - 58);
+
+  // Rank
+  ctx.fillStyle = rank.color;
+  ctx.font = 'bold 16px monospace';
+  ctx.fillText(rank.emoji + ' ' + rank.name + '段位', W / 2, H / 2 + 18);
+
+  // Score
+  ctx.fillStyle = '#ffcc00';
+  ctx.font = 'bold 16px monospace';
+  ctx.fillText('⭐ ' + score + '分', W / 2, H / 2 + 40);
+
+  if (isNewRecord) {
+    ctx.fillStyle = '#ffd700';
+    ctx.font = 'bold 18px monospace';
+    ctx.fillText('🏆 新纪录! 🏆', W / 2, H / 2 + 62);
+  }
+
+  // Stats compact row
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  ctx.fillRect(80, H / 2 + 80, W - 160, 40);
+  ctx.font = '12px monospace';
+  ctx.fillStyle = '#aaa'; ctx.textAlign = 'left';
+  var sx = 100;
+  var sy = H / 2 + 98;
+  ctx.fillText('连击' + runStats.maxCombo + 'x', sx, sy); sx += 100;
+  ctx.fillText('跳跃' + runStats.jumps, sx, sy); sx += 100;
+  ctx.fillText('金币' + runStats.coinsCollected, sx, sy); sx += 100;
+  ctx.fillText('撞墙' + runStats.wallHits, sx, sy); sx += 100;
+  ctx.fillText('掉坑' + runStats.pitsFallen, sx, sy);
+
+  // Restart
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 16px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('按 R 重新挑战', W / 2, H / 2 + 148);
 }
 
 function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
