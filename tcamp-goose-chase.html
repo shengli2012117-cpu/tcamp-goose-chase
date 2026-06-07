@@ -5,7 +5,7 @@
 <title>Tcamp 鹅追击</title>
 <style>
   body { margin: 0; background: #1a1a2e; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
-  canvas { border: 2px solid #444; cursor: pointer; }
+  canvas { border: 2px solid #444; cursor: pointer; user-select: none; -webkit-user-select: none; }
 </style>
 </head>
 <body>
@@ -18,24 +18,74 @@ const W = 800, H = 600;
 const GROUND_Y = 500;
 const PLAYER_SIZE = 32;
 const GOOSE_SIZE = 36;
-const PORTAL_SIZE = 44;
-const MAP_WIDTH = 7800;
-const BASE_SPEED = 2.0;
-const SPEED_BOOST_PER_TIER = 0.25;
-let playerSpeed = BASE_SPEED;
+const BASE_SPEED = 2.2;
+const SPAWN_AHEAD = 1000;   // generate obstacles this far ahead of camera
+const DESPAWN_BEHIND = 600; // remove obstacles this far behind camera
 
 // --- Game state ---
-let player, goose, obstacles, coins, portal, camera, gameState, countdownTimer, particles;
-let score, distanceScore, coinCount, coinScore, speedTier;
-let jumpRequested = 0; // Jump buffer: 0-2 pending jumps
-let spaceWasDown = false;
-let combo = 0;
-let milestonesTriggered = { 25: false, 50: false, 75: false };
-let trailParticles = [];
-let screenShake = 0;
-let highScore = 0;
-try { highScore = parseInt(localStorage.getItem('tcampHighScore')) || 0; } catch(e) {}
+let player, goose, camera, gameState, countdownTimer;
+let obstacles = [], coins = [];
+let speedTier, distanceScore, coinScore, coinCount, score;
+let lastObstacleX, generatorIndex;
+let jumpRequested, spaceWasDown;
+let particles, popups, trailParticles;
+let combo, screenShake, highScore;
+let playerSpeed;
 
+try { highScore = parseInt(localStorage.getItem('tcampHighScore')) || 0; } catch(e) { highScore = 0; }
+
+// --- Wave pattern: group of 3-5 obstacles, then a breath gap ---
+const OB_TYPES = ['small', 'beam', 'tall', 'small', 'tall', 'beam']; // tall+beam rarer
+function generateWave(lastX, waveIdx) {
+  const baseGap = Math.max(280, 380 - waveIdx * 6); // shrinks over time
+  const waveSize = 3 + Math.floor(Math.random() * 3); // 3-5 obstacles per wave
+  const breathGap = Math.max(400, 600 - waveIdx * 10);
+  const obs = [];
+  let curX = lastX + breathGap;
+
+  for (let i = 0; i < waveSize; i++) {
+    const gap = baseGap + Math.floor(Math.random() * 80);
+    const types = ['small', 'small', 'small', 'small', 'tall', 'small', 'beam', 'small'];
+    const type = types[Math.floor(Math.random() * types.length)];
+    let w = 28, h = 22, y = GROUND_Y - 22;
+    if (type === 'tall') { h = 44; y = GROUND_Y - 44; w = 30; }
+    if (type === 'beam') { h = 14; y = GROUND_Y - 34; w = 50 + Math.floor(Math.random() * 15); }
+    // Rare pit (2% chance), but only one pit per wave max
+    const isPit = (waveIdx > 3 && Math.random() < 0.02 && !obs.some(o => o.type === 'pit'));
+    if (isPit) {
+      obs.push({ x: curX, y: 0, w: 60 + Math.random() * 20, h: 0, type: 'pit', cleared: false });
+    } else {
+      obs.push({ x: curX, y, w, h, type, cleared: false });
+    }
+    curX += gap;
+  }
+  return { obstacles: obs, endX: curX };
+}
+
+// --- Spawn coins around a group of obstacles ---
+function spawnCoinsForObstacles(obs) {
+  const newCoins = [];
+  for (const o of obs) {
+    if (o.type === 'beam') {
+      newCoins.push({ x: o.x + 10, y: GROUND_Y - 20, collected: false });
+      newCoins.push({ x: o.x + 25, y: GROUND_Y - 20, collected: false });
+    } else if (o.type === 'pit') {
+      // Arc over pit
+      const cx = o.x + o.w / 2;
+      for (let dy = 0; dy < 3; dy++) {
+        newCoins.push({ x: cx - 15 + dy * 15, y: GROUND_Y - 90 - Math.abs(dy - 1) * 25, collected: false });
+      }
+    } else {
+      // Ground coin before obstacle
+      newCoins.push({ x: o.x - 50, y: GROUND_Y - 40, collected: false });
+      // Air coin above obstacle
+      newCoins.push({ x: o.x + 5, y: GROUND_Y - (o.type === 'tall' ? 90 : 70), collected: false });
+    }
+  }
+  return newCoins;
+}
+
+// ===================== RESET =====================
 function reset() {
   playerSpeed = BASE_SPEED;
   player = {
@@ -47,125 +97,42 @@ function reset() {
     stumble: 0, pitFalling: 0
   };
   goose = { x: -40, y: GROUND_Y - GOOSE_SIZE, w: GOOSE_SIZE, h: GOOSE_SIZE };
-  jumpRequested = 0;
-  spaceWasDown = false;
-
-  obstacles = [
-    // --- 前半段 (0 – 4200) ---
-    { x: 750,  y: GROUND_Y - 22, w: 28, h: 22, type: 'small', cleared: false },
-    { x: 1050, y: GROUND_Y - 34, w: 50, h: 14, type: 'beam',  cleared: false },
-    { x: 1400, y: GROUND_Y - 44, w: 30, h: 44, type: 'tall',  cleared: false },
-    { x: 1800, y: GROUND_Y - 22, w: 28, h: 22, type: 'small', cleared: false },
-    { x: 2200, y: GROUND_Y - 34, w: 55, h: 14, type: 'beam',  cleared: false },
-    { x: 2600, y: GROUND_Y - 44, w: 30, h: 44, type: 'tall',  cleared: false },
-    { x: 3000, y: GROUND_Y - 22, w: 28, h: 22, type: 'small', cleared: false },
-    { x: 3400, y: GROUND_Y - 34, w: 50, h: 14, type: 'beam',  cleared: false },
-    { x: 3800, y: GROUND_Y - 44, w: 30, h: 44, type: 'tall',  cleared: false },
-    // --- 后半段 (4200 – 7800) ---
-    { x: 4300, y: GROUND_Y - 22, w: 28, h: 22, type: 'small', cleared: false },
-    { x: 4700, y: GROUND_Y - 34, w: 55, h: 14, type: 'beam',  cleared: false },
-    { x: 5100, y: GROUND_Y - 44, w: 30, h: 44, type: 'tall',  cleared: false },
-    { x: 5500, y: GROUND_Y - 22, w: 28, h: 22, type: 'small', cleared: false },
-    // 唯一深坑 — 中段终极考验
-    { x: 5900, y: 0,               w: 70, h: 0,  type: 'pit',   cleared: false },
-    { x: 6300, y: GROUND_Y - 34, w: 50, h: 14, type: 'beam',  cleared: false },
-    { x: 6700, y: GROUND_Y - 44, w: 30, h: 44, type: 'tall',  cleared: false },
-    // 冲刺区 — 密集连跳
-    { x: 7200, y: GROUND_Y - 22, w: 28, h: 22, type: 'small', cleared: false },
-    { x: 7350, y: GROUND_Y - 22, w: 28, h: 22, type: 'small', cleared: false },
-    { x: 7500, y: GROUND_Y - 44, w: 30, h: 44, type: 'tall',  cleared: false },
-    { x: 7650, y: GROUND_Y - 34, w: 55, h: 14, type: 'beam',  cleared: false },
-  ];
-
-  coins = [
-    // ===== 前半段 =====
-    { x: 450,  y: GROUND_Y - 50, collected: false },
-    { x: 900,  y: GROUND_Y - 40, collected: false },
-    { x: 950,  y: GROUND_Y - 40, collected: false },
-    { x: 1200, y: GROUND_Y - 40, collected: false },
-    { x: 1250, y: GROUND_Y - 40, collected: false },
-    { x: 1500, y: GROUND_Y - 40, collected: false },
-    { x: 1850, y: GROUND_Y - 40, collected: false },
-    { x: 1950, y: GROUND_Y - 40, collected: false },
-    { x: 2350, y: GROUND_Y - 40, collected: false },
-    { x: 2700, y: GROUND_Y - 40, collected: false },
-    { x: 3050, y: GROUND_Y - 40, collected: false },
-    { x: 3400, y: GROUND_Y - 40, collected: false },
-    { x: 760,  y: GROUND_Y - 70, collected: false },
-    { x: 1410, y: GROUND_Y - 90, collected: false },
-    { x: 2610, y: GROUND_Y - 90, collected: false },
-    { x: 3010, y: GROUND_Y - 70, collected: false },
-    { x: 1065, y: GROUND_Y - 20, collected: false },
-    { x: 1085, y: GROUND_Y - 20, collected: false },
-    { x: 2215, y: GROUND_Y - 20, collected: false },
-    { x: 2235, y: GROUND_Y - 20, collected: false },
-    { x: 3415, y: GROUND_Y - 20, collected: false },
-    { x: 3435, y: GROUND_Y - 20, collected: false },
-    // ===== 唯一深坑弧线金币 (x=5900) =====
-    { x: 5925, y: GROUND_Y - 90,  collected: false },
-    { x: 5950, y: GROUND_Y - 115, collected: false },
-    { x: 5975, y: GROUND_Y - 90,  collected: false },
-    // ===== 后半段地面金币 =====
-    { x: 4150, y: GROUND_Y - 40, collected: false },
-    { x: 4450, y: GROUND_Y - 40, collected: false },
-    { x: 4500, y: GROUND_Y - 40, collected: false },
-    { x: 4800, y: GROUND_Y - 40, collected: false },
-    { x: 5150, y: GROUND_Y - 40, collected: false },
-    { x: 5550, y: GROUND_Y - 40, collected: false },
-    { x: 5600, y: GROUND_Y - 40, collected: false },
-    { x: 6000, y: GROUND_Y - 40, collected: false },
-    { x: 6350, y: GROUND_Y - 40, collected: false },
-    { x: 6700, y: GROUND_Y - 40, collected: false },
-    { x: 6750, y: GROUND_Y - 40, collected: false },
-    { x: 7100, y: GROUND_Y - 40, collected: false },
-    // ===== 后半段空中金币 =====
-    { x: 4310, y: GROUND_Y - 70, collected: false },
-    { x: 5110, y: GROUND_Y - 90, collected: false },
-    { x: 5510, y: GROUND_Y - 70, collected: false },
-    { x: 6710, y: GROUND_Y - 90, collected: false },
-    { x: 7210, y: GROUND_Y - 70, collected: false },
-    { x: 7360, y: GROUND_Y - 70, collected: false },
-    { x: 7510, y: GROUND_Y - 90, collected: false },
-    // ===== 后半段滑铲金币 =====
-    { x: 4715, y: GROUND_Y - 20, collected: false },
-    { x: 4735, y: GROUND_Y - 20, collected: false },
-    { x: 6315, y: GROUND_Y - 20, collected: false },
-    { x: 6335, y: GROUND_Y - 20, collected: false },
-    { x: 7665, y: GROUND_Y - 20, collected: false },
-    { x: 7685, y: GROUND_Y - 20, collected: false },
-  ];
-
-  portal = { x: MAP_WIDTH - 80, y: GROUND_Y - PORTAL_SIZE, w: PORTAL_SIZE, h: PORTAL_SIZE, glow: 0 };
   camera = { x: 0 };
   gameState = 'waiting';
   countdownTimer = 0;
-  particles = [];
-  popups = [];
-  score = 0;
+  jumpRequested = 0;
+  spaceWasDown = false;
+  speedTier = 0;
   distanceScore = 0;
   coinScore = 0;
   coinCount = 0;
-  speedTier = 0;
+  score = 0;
   combo = 0;
-  milestonesTriggered = { 25: false, 50: false, 75: false };
+  screenShake = 0;
+  generatorIndex = 0;
+  lastObstacleX = 400;
+  obstacles = [];
+  coins = [];
+  particles = [];
+  popups = [];
   trailParticles = [];
+
+  // Pre-generate first 2 waves
+  for (let w = 0; w < 2; w++) {
+    const wave = generateWave(lastObstacleX, generatorIndex);
+    obstacles.push(...wave.obstacles);
+    coins.push(...spawnCoinsForObstacles(wave.obstacles));
+    lastObstacleX = wave.endX;
+    generatorIndex++;
+  }
 }
 
-let popups = [];
 function addPopup(x, y, text, color) {
   popups.push({ x, y, text, color, life: 40, vy: -2 });
 }
-
 function spawnParticles(x, y, color, count) {
   for (let i = 0; i < count; i++) {
-    particles.push({
-      x, y,
-      vx: (Math.random() - 0.5) * 8,
-      vy: (Math.random() - 1) * 8,
-      life: 40 + Math.random() * 20,
-      color,
-      size: 2 + Math.random() * 4
-    });
+    particles.push({ x, y, vx: (Math.random() - 0.5) * 8, vy: (Math.random() - 1) * 8, life: 40 + Math.random() * 20, color, size: 2 + Math.random() * 4 });
   }
 }
 
@@ -174,9 +141,7 @@ const keys = {};
 window.addEventListener('keydown', e => {
   keys[e.key] = true;
   if (e.key === 'r' || e.key === 'R') reset();
-  if (gameState === 'waiting' && (e.key === ' ' || e.key === 'Space')) {
-    gameState = 'countdown'; countdownTimer = 90;
-  }
+  if (gameState === 'waiting' && (e.key === ' ' || e.key === 'Space')) { gameState = 'countdown'; countdownTimer = 90; }
   if ((e.key === ' ' || e.key === 'Space') && gameState === 'playing') {
     player.jumpHeld = true;
     if (!spaceWasDown) jumpRequested = Math.min(jumpRequested + 1, 2);
@@ -188,10 +153,7 @@ window.addEventListener('keyup', e => {
   keys[e.key] = false;
   if ((e.key === ' ' || e.key === 'Space')) {
     spaceWasDown = false;
-    if (gameState === 'playing') {
-      player.jumpHeld = false;
-      if (player.vy < -3) player.vy = -3;
-    }
+    if (gameState === 'playing') { player.jumpHeld = false; if (player.vy < -3) player.vy = -3; }
   }
   e.preventDefault();
 });
@@ -201,134 +163,104 @@ canvas.addEventListener('click', () => {
 });
 
 // ===================== COLLISION =====================
-function collides(a, b) {
-  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-}
+function collides(a, b) { return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; }
 
 // ===================== UPDATE =====================
 function update() {
-  for (let i = particles.length - 1; i >= 0; i--) {
-    const p = particles[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life--;
-    if (p.life <= 0) particles.splice(i, 1);
-  }
-  for (let i = popups.length - 1; i >= 0; i--) {
-    const p = popups[i]; p.y += p.vy; p.life--;
-    if (p.life <= 0) popups.splice(i, 1);
-  }
+  for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life--; if (p.life <= 0) particles.splice(i, 1); }
+  for (let i = popups.length - 1; i >= 0; i--) { const p = popups[i]; p.y += p.vy; p.life--; if (p.life <= 0) popups.splice(i, 1); }
 
   if (gameState === 'countdown') { countdownTimer--; if (countdownTimer <= 0) gameState = 'playing'; return; }
   if (gameState !== 'playing') return;
 
-  const progressRatio = Math.min(player.x / MAP_WIDTH, 1);
-  const newTier = Math.floor(progressRatio * 5);
-  if (newTier > speedTier) {
-    speedTier = newTier;
-    playerSpeed = BASE_SPEED + speedTier * SPEED_BOOST_PER_TIER;
-    addPopup(player.x, player.y - 40, '加速!', '#ffcc00');
+  // ---- Speed ramp: +0.12 every 500m, no cap ----
+  const distInHundreds = Math.floor(player.x / 500);
+  if (distInHundreds > speedTier) {
+    speedTier = distInHundreds;
+    playerSpeed = BASE_SPEED + speedTier * 0.12;
+    addPopup(player.x, player.y - 40, '加速! ×' + playerSpeed.toFixed(1), '#ffcc00');
   }
 
-  // Speed penalty while stumbling
+  // ---- Procedural generation: ensure obstacles exist ahead ----
+  const viewRight = camera.x + W + SPAWN_AHEAD;
+  while (lastObstacleX < viewRight) {
+    const wave = generateWave(lastObstacleX, generatorIndex);
+    obstacles.push(...wave.obstacles);
+    coins.push(...spawnCoinsForObstacles(wave.obstacles));
+    lastObstacleX = wave.endX;
+    generatorIndex++;
+  }
+  // Cleanup: remove obstacles far behind
+  const cleanX = camera.x - DESPAWN_BEHIND;
+  obstacles = obstacles.filter(o => o.x + o.w > cleanX);
+  coins = coins.filter(c => c.collected || c.x > cleanX - 100);
+
+  // ---- Player movement ----
   const effectiveSpeed = player.stumble > 0 ? playerSpeed * 0.3 : playerSpeed;
   player.x += effectiveSpeed;
   player.runFrame++;
   distanceScore = Math.floor(player.x / 10);
   score = distanceScore + coinScore;
 
-  // Pit falling — animate fall, then die
+  // Pit falling
   if (player.pitFalling > 0) {
     player.pitFalling--;
-    player.vy += 0.3;
-    player.y += player.vy;
+    player.vy += 0.3; player.y += player.vy;
     spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 1);
     if (player.pitFalling <= 0) { saveHighScore(); gameState = 'over'; }
     return;
   }
 
-  // ---- Slide ----
+  // Slide
   const sDown = (keys['s'] || keys['S']);
-  const wantSlide = sDown && player.onGround && !player.sliding;
-  if (wantSlide) { player.sliding = true; player.slideTimer = 36; }
+  if (sDown && player.onGround && !player.sliding) { player.sliding = true; player.slideTimer = 36; }
   player.holdingSlide = sDown;
   if (player.sliding) {
     player.slideTimer--;
     player.h = 16; player.y = GROUND_Y - player.h;
-    // Keep sliding as long as S is held
     if (player.holdingSlide && player.slideTimer < 6) player.slideTimer = 6;
     if (player.slideTimer <= 0) { player.sliding = false; player.h = PLAYER_SIZE; player.y = GROUND_Y - player.h; }
-  } else if (player.onGround) {
-    player.h = PLAYER_SIZE;
-  }
+  } else if (player.onGround) { player.h = PLAYER_SIZE; }
 
-  // ===== BRAND NEW JUMP SYSTEM =====
-  // Process jump buffer: each request consumes one "jump credit"
+  // Jump system (buffer-based)
   while (jumpRequested > 0 && player.jumpsUsed < 2) {
     const power = player.jumpsUsed === 0 ? -12 : -9;
-    player.vy = power;
-    player.onGround = false;
-    player.coyoteTimer = 0;
+    player.vy = power; player.onGround = false; player.coyoteTimer = 0;
     player.doubleJumped = (player.jumpsUsed === 1);
-    player.jumpHeld = true;
-    player.jumpsUsed++;
-    jumpRequested--;
-
+    player.jumpHeld = true; player.jumpsUsed++; jumpRequested--;
     if (player.jumpsUsed === 2) {
       spawnParticles(player.x + player.w/2, player.y + player.h, '#fff', 12);
       addPopup(player.x, player.y - 20, '二段跳!', '#90caf9');
     }
   }
-  // If holding Space and not rising, don't keep requesting jumps
-  // (spaceWasDown prevents auto-repeat from adding more requests)
 
-  // Variable-height: release early → short hop
-  if (!player.jumpHeld && player.vy < -3) {
-    player.vy = -3;
-  }
+  if (!player.jumpHeld && player.vy < -3) player.vy = -3;
+  player.vy += 0.45; player.y += player.vy;
 
-  // Gravity
-  player.vy += 0.45;
-  player.y += player.vy;
-
-  // Ground collision — resets jumpsUsed
+  // Ground collision
   if (player.y >= GROUND_Y - player.h) {
-    player.y = GROUND_Y - player.h;
-    player.vy = 0;
-    player.onGround = true;
-    player.coyoteTimer = 0;
-    player.jumpsUsed = 0;
-    player.doubleJumped = false;
+    player.y = GROUND_Y - player.h; player.vy = 0;
+    player.onGround = true; player.coyoteTimer = 0;
+    player.jumpsUsed = 0; player.doubleJumped = false;
     if (!player.sliding) player.h = PLAYER_SIZE;
-  } else if (player.onGround && player.vy > 0) {
-    player.onGround = false;
-    player.coyoteTimer = 7;
-  }
+  } else if (player.onGround && player.vy > 0) { player.onGround = false; player.coyoteTimer = 7; }
 
-  // Coyote time: if request comes while falling off a ledge
+  // Coyote time
   if (jumpRequested > 0 && player.jumpsUsed === 0 && player.coyoteTimer > 0) {
-    player.vy = -12;
-    player.onGround = false;
-    player.coyoteTimer = 0;
-    player.doubleJumped = false;
-    player.jumpHeld = true;
-    player.jumpsUsed = 1;
-    jumpRequested--;
+    player.vy = -12; player.onGround = false; player.coyoteTimer = 0;
+    player.doubleJumped = false; player.jumpHeld = true; player.jumpsUsed = 1; jumpRequested--;
   }
   if (player.coyoteTimer > 0 && player.jumpsUsed > 0) player.coyoteTimer--;
   if (player.coyoteTimer > 0 && player.jumpsUsed === 0) player.coyoteTimer--;
 
-  // Pit death — start falling animation
+  // Pit detection
   for (const obs of obstacles) {
-    if (obs.type === 'pit') {
-      const pHoriz = player.x + player.w > obs.x && player.x < obs.x + obs.w;
-      if (pHoriz && player.y >= GROUND_Y - player.h && player.vy >= 0 && player.pitFalling === 0) {
-        player.pitFalling = 45; // fall for 45 frames then die
-        player.vy = 0;
-      }
+    if (obs.type !== 'pit') continue;
+    const pHoriz = player.x + player.w > obs.x && player.x < obs.x + obs.w;
+    if (pHoriz && player.y >= GROUND_Y - player.h && player.vy >= 0 && player.pitFalling === 0) {
+      player.pitFalling = 45; player.vy = 0;
     }
   }
-
-  if (player.x < 100) player.x = 100;
-
-  portal.glow = (portal.glow + 0.05) % (Math.PI * 2);
 
   // Coin collection
   for (const coin of coins) {
@@ -341,52 +273,40 @@ function update() {
     }
   }
 
-  // ---- Combo: detect when player clears an obstacle ----
+  // Combo detection
   for (const obs of obstacles) {
     if (obs.cleared) continue;
+    if (obs.type === 'pit') { if (player.x > obs.x + obs.w + 40) obs.cleared = true; continue; }
     if (player.x > obs.x + obs.w + 40) {
-      obs.cleared = true;
-      combo++;
-      let bonus = 0;
-      let msg = '';
-      if (combo >= 7)      { bonus = combo * 10; msg = `${combo}x Combo! 🔥`; }
-      else if (combo >= 4) { bonus = combo * 6;  msg = `${combo}x Combo!`; }
-      else if (combo >= 2) { bonus = combo * 3;  msg = `${combo}x Combo!`; }
-      coinScore += bonus;
-      score = distanceScore + coinScore;
-      if (bonus > 0) {
-        addPopup(obs.x + obs.w/2, obs.y - 20, `+${bonus} ${msg}`, (combo >= 7 ? '#ff4444' : '#ffcc00'));
-      }
-    }
-  }
-  // Combo decays: if player is on ground and hasn't cleared anything in a while
-  // (handled by the fact we only mark cleared once — combo naturally persists)
-
-  // ---- Milestones ----
-  const progPct = Math.floor(progressRatio * 100);
-  for (const ms of [25, 50, 75]) {
-    if (progPct >= ms && !milestonesTriggered[ms]) {
-      milestonesTriggered[ms] = true;
-      const cheers = ms === 25 ? '好的开始! 🚀' : ms === 50 ? '过半了! 💪' : '快到了! 🏁';
-      addPopup(player.x, player.y - 50, cheers, '#00e676');
-      spawnParticles(player.x, player.y, '#00e676', 20);
+      obs.cleared = true; combo++;
+      let bonus = 0, msg = '';
+      if (combo >= 7)      { bonus = combo * 10; msg = combo + 'x Combo! 🔥'; }
+      else if (combo >= 4) { bonus = combo * 6;  msg = combo + 'x Combo!'; }
+      else if (combo >= 2) { bonus = combo * 3;  msg = combo + 'x Combo!'; }
+      coinScore += bonus; score = distanceScore + coinScore;
+      if (bonus > 0) addPopup(obs.x + obs.w/2, obs.y - 20, '+' + bonus + ' ' + msg, (combo >= 7 ? '#ff4444' : '#ffcc00'));
     }
   }
 
-  // ---- Trail particles (behind player while running) ----
-  if (player.onGround && !player.sliding) {
-    const trailRate = 0.35 + (playerSpeed - BASE_SPEED) * 0.15; // more at higher speed
-    if (Math.random() < trailRate) {
-      trailParticles.push({
-        x: player.x - 4, y: player.y + player.h - 4,
-        life: 12 + Math.random() * 14, size: 1.5 + Math.random() * 3
-      });
+  // Milestones every 100m
+  const milestone = Math.floor(player.x / 1000) * 100;
+  if (milestone > 0 && player.x % 1000 < playerSpeed + 2 && milestone >= 100) {
+    // Fire once
+    if (!player._lastMilestone) player._lastMilestone = 0;
+    if (milestone > player._lastMilestone) {
+      player._lastMilestone = milestone;
+      addPopup(player.x, player.y - 55, milestone + 'm! 🏃', '#00e676');
+      spawnParticles(player.x, player.y, '#00e676', 15);
     }
   }
-  // Update trail particles
+
+  // Trail particles
+  if (player.onGround && !player.sliding && player.stumble <= 0) {
+    const trailRate = 0.35 + (playerSpeed - BASE_SPEED) * 0.15;
+    if (Math.random() < trailRate) trailParticles.push({ x: player.x - 4, y: player.y + player.h - 4, life: 12 + Math.random() * 14, size: 1.5 + Math.random() * 3 });
+  }
   for (let i = trailParticles.length - 1; i >= 0; i--) {
-    trailParticles[i].life--;
-    trailParticles[i].x -= 0.3 + Math.random() * 0.5;
+    trailParticles[i].life--; trailParticles[i].x -= 0.3 + Math.random() * 0.5;
     if (trailParticles[i].life <= 0) trailParticles.splice(i, 1);
   }
 
@@ -394,27 +314,19 @@ function update() {
   const targetCamX = player.x - W / 3;
   camera.x += (targetCamX - camera.x) * 0.12;
   if (camera.x < 0) camera.x = 0;
-  if (camera.x > MAP_WIDTH - W) camera.x = MAP_WIDTH - W;
 
-  // ===== OBSTACLE COLLISION → STUMBLE (doesn't kill, just slows you) =====
+  // Obstacle collision → stumble
   if (player.stumble <= 0) {
     for (const obs of obstacles) {
       if (obs.type === 'pit') continue;
       const margin = 6;
       const pBox = { x: player.x + margin, y: player.y + margin, w: player.w - margin*2, h: player.h - margin*2 };
       let oBox;
-      if (obs.type === 'beam') {
-        if (player.sliding) continue;
-        oBox = { x: obs.x + 2, y: obs.y + 1, w: obs.w - 4, h: obs.h - 1 };
-      } else {
-        oBox = { x: obs.x + 3, y: obs.y + 2, w: obs.w - 6, h: obs.h - 2 };
-      }
+      if (obs.type === 'beam') { if (player.sliding) continue; oBox = { x: obs.x + 2, y: obs.y + 1, w: obs.w - 4, h: obs.h - 1 }; }
+      else { oBox = { x: obs.x + 3, y: obs.y + 2, w: obs.w - 6, h: obs.h - 2 }; }
       if (collides(pBox, oBox)) {
-        player.stumble = 28;
-        player.x = Math.max(100, player.x - 30);
-        player.y = GROUND_Y - player.h;
-        player.vy = -4;
-        player.onGround = false;
+        player.stumble = 28; player.x = Math.max(100, player.x - 30);
+        player.y = GROUND_Y - player.h; player.vy = -4; player.onGround = false;
         spawnParticles(player.x + player.w/2, player.y + player.h, '#ff8844', 12);
         addPopup(player.x, player.y - 20, '哎呀!', '#ff8844');
         break;
@@ -423,98 +335,60 @@ function update() {
   }
   if (player.stumble > 0) player.stumble--;
 
-  // ===== GOOSE RUBBER-BAND CHASE (Temple Run style) =====
-  // Goose phases through ALL obstacles. Relentless, unblockable.
-  // Normal: goose = player × 0.92 → gap slowly widens if you run clean.
-  // Stumble: goose runs at FULL playerSpeed → closes gap FAST.
-  // Late game: chaseRatio ramps to 1.0 → zero margin for error.
-  const gooseDistToPlayer = player.x - goose.x;
-  const chaseRatio = 0.92 + progressRatio * 0.08; // 0.92 → 1.0
-  const gooseSpeed = player.stumble > 0
-    ? playerSpeed // stumble = goose at full speed, you at 0.3x
-    : effectiveSpeed * chaseRatio;
+  // Goose rubber-band chase
+  const gooseDist = player.x - goose.x;
+  const chaseRatio = 0.92 + Math.min(distanceScore / 10000, 0.08); // ramps to 100% over 10km
+  const gooseSpeed = player.stumble > 0 ? playerSpeed : effectiveSpeed * chaseRatio;
   goose.x += gooseSpeed;
 
-  // Screen shake when goose is dangerously close
-  if (gooseDistToPlayer < 100) {
-    screenShake = 100 - gooseDistToPlayer;
-    if (screenShake > 10) screenShake = 10;
-  } else {
-    screenShake = Math.max(0, screenShake - 0.5);
-  }
+  screenShake = gooseDist < 100 ? Math.min(10, 100 - gooseDist) : Math.max(0, screenShake - 0.5);
 
-  // Goose catches player = instant death
-  if (gooseDistToPlayer < 8) {
-    spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 50);
-    saveHighScore(); gameState = 'over'; return;
-  }
-
-  if (collides(player, portal)) {
-    spawnParticles(player.x + player.w/2, player.y + player.h/2, '#00ff88', 40);
-    gameState = 'victory';
-    saveHighScore();
-    return;
-  }
-  if (player.x > MAP_WIDTH + 60 || player.y > H + 60) { gameState = 'over'; saveHighScore(); return; }
+  if (gooseDist < 8) { spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 50); saveHighScore(); gameState = 'over'; return; }
 }
 
-function saveHighScore() {
-  if (score > highScore) {
-    highScore = score;
-    try { localStorage.setItem('tcampHighScore', highScore); } catch(e) {}
-  }
-}
+function saveHighScore() { if (score > highScore) { highScore = score; try { localStorage.setItem('tcampHighScore', highScore); } catch(e) {} } }
 
 // ===================== RENDER =====================
 function draw() {
   ctx.clearRect(0, 0, W, H);
-
-  const sky = ctx.createLinearGradient(0, 0, 0, H);
-  sky.addColorStop(0, '#0a0a1a'); sky.addColorStop(0.5, '#1a1a3e'); sky.addColorStop(1, '#3a2a5c');
+  // Sky
+  const sky = ctx.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#0a0a1a'); sky.addColorStop(0.5, '#1a1a3e'); sky.addColorStop(1, '#3a2a5c');
   ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
 
-  ctx.save(); ctx.translate(-camera.x * 0.3, 0);
+  // Parallax stars (tileable)
+  ctx.save(); ctx.translate(-(camera.x * 0.3 % 800), 0);
   ctx.fillStyle = '#ffffff33';
-  for (let i = 0; i < 60; i++) {
-    const sx = ((i * 137 + 42) % MAP_WIDTH);
-    const sy = ((i * 251 + 42) % (GROUND_Y - 60));
-    ctx.fillRect(sx, sy, 2, 2);
-  }
+  for (let i = 0; i < 60; i++) ctx.fillRect(((i * 137 + 42) % 800), ((i * 251 + 42) % (GROUND_Y - 60)), 2, 2);
+  for (let i = 0; i < 60; i++) ctx.fillRect(((i * 137 + 42) % 800) + 800, ((i * 251 + 42) % (GROUND_Y - 60)), 2, 2);
   ctx.restore();
 
-  ctx.save(); ctx.translate(-camera.x * 0.5, 0);
+  // Parallax mountains (tileable)
+  ctx.save(); ctx.translate(-(camera.x * 0.5 % 1000), 0);
   ctx.fillStyle = '#1e1e3a';
-  for (let i = 0; i < 8; i++) {
-    const mx = i * 500;
-    ctx.beginPath(); ctx.moveTo(mx - 120, GROUND_Y); ctx.lineTo(mx + 60, GROUND_Y - 180); ctx.lineTo(mx + 240, GROUND_Y); ctx.fill();
-  }
+  for (let i = 0; i < 10; i++) { const mx = i * 500; ctx.beginPath(); ctx.moveTo(mx - 120, GROUND_Y); ctx.lineTo(mx + 60, GROUND_Y - 180); ctx.lineTo(mx + 240, GROUND_Y); ctx.fill(); }
   ctx.restore();
 
+  // Visible range
+  const visLeft = camera.x - 100, visRight = camera.x + W + 100;
   ctx.save(); ctx.translate(-camera.x, 0);
 
-  // Ground
-  ctx.fillStyle = '#2a2a4a'; ctx.fillRect(0, GROUND_Y, MAP_WIDTH, H - GROUND_Y);
-  ctx.fillStyle = '#3d3d6b'; ctx.fillRect(0, GROUND_Y, MAP_WIDTH, 4);
+  // Ground (segment, just draw the visible portion)
+  ctx.fillStyle = '#2a2a4a'; ctx.fillRect(visLeft, GROUND_Y, visRight - visLeft, H - GROUND_Y);
+  ctx.fillStyle = '#3d3d6b'; ctx.fillRect(visLeft, GROUND_Y, visRight - visLeft, 4);
   ctx.strokeStyle = '#333360'; ctx.lineWidth = 1;
-  for (let gx = 0; gx < MAP_WIDTH; gx += 80) {
-    ctx.beginPath(); ctx.moveTo(gx, GROUND_Y + 4);
-    ctx.lineTo(gx, GROUND_Y + 4 + ((gx / 80) % 3 === 0 ? 24 : 12)); ctx.stroke();
+  for (let gx = Math.floor(visLeft / 80) * 80; gx < visRight; gx += 80) {
+    ctx.beginPath(); ctx.moveTo(gx, GROUND_Y + 4); ctx.lineTo(gx, GROUND_Y + 4 + ((gx / 80) % 3 === 0 ? 24 : 12)); ctx.stroke();
   }
 
-  // Pits
+  // Obstacles
   for (const obs of obstacles) {
-    if (obs.type !== 'pit') continue;
-    ctx.fillStyle = '#0a0a0a'; ctx.fillRect(obs.x, GROUND_Y, obs.w, H - GROUND_Y);
-    ctx.fillStyle = '#ff444466'; ctx.fillRect(obs.x, GROUND_Y, 3, H - GROUND_Y);
-    ctx.fillRect(obs.x + obs.w - 3, GROUND_Y, 3, H - GROUND_Y);
-    ctx.fillStyle = '#ff4444'; ctx.font = '18px monospace'; ctx.textAlign = 'center';
-    ctx.fillText('▼ 坑 ▼', obs.x + obs.w/2, GROUND_Y - 10 + Math.sin(Date.now() * 0.005) * 4);
-  }
-
-  // Solid obstacles & beams
-  for (const obs of obstacles) {
-    if (obs.type === 'pit') continue;
-    if (obs.type === 'beam') {
+    if (obs.x + obs.w < visLeft || obs.x > visRight) continue;
+    if (obs.type === 'pit') {
+      ctx.fillStyle = '#0a0a0a'; ctx.fillRect(obs.x, GROUND_Y, obs.w, H - GROUND_Y);
+      ctx.fillStyle = '#ff444466'; ctx.fillRect(obs.x, GROUND_Y, 3, H - GROUND_Y); ctx.fillRect(obs.x + obs.w - 3, GROUND_Y, 3, H - GROUND_Y);
+      ctx.fillStyle = '#ff4444'; ctx.font = '18px monospace'; ctx.textAlign = 'center';
+      ctx.fillText('▼ 坑 ▼', obs.x + obs.w/2, GROUND_Y - 10 + Math.sin(Date.now() * 0.005) * 4);
+    } else if (obs.type === 'beam') {
       ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(obs.x + 2, obs.y + 2, obs.w, obs.h);
       ctx.fillStyle = '#7b1fa2'; ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
       ctx.strokeStyle = '#e040fb'; ctx.lineWidth = 2; ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
@@ -524,81 +398,53 @@ function draw() {
       for (let sx = obs.x + 5; sx < obs.x + obs.w - 5; sx += 12) {
         ctx.beginPath(); ctx.moveTo(sx, obs.y + obs.h); ctx.lineTo(sx + 4, obs.y + obs.h + 10); ctx.lineTo(sx + 8, obs.y + obs.h); ctx.fill();
       }
-      ctx.fillStyle = '#e040fb'; ctx.font = '13px monospace'; ctx.textAlign = 'center';
-      ctx.fillText('↓ 滑铲 ↓', obs.x + obs.w/2, obs.y - 6);
-      continue;
-    }
-    const isTall = obs.type === 'tall';
-    ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(obs.x + 3, obs.y + 3, obs.w, obs.h);
-    ctx.fillStyle = isTall ? '#1a1a1a' : '#222'; ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
-    ctx.strokeStyle = isTall ? '#ff1744' : '#e53935'; ctx.lineWidth = 2; ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
-    ctx.fillStyle = '#c62828'; const stripeW = 6;
-    for (let sx = obs.x; sx < obs.x + obs.w; sx += stripeW * 2) ctx.fillRect(sx, obs.y, Math.min(stripeW, obs.x + obs.w - sx), isTall ? 8 : 6);
-    ctx.fillStyle = '#d32f2f';
-    for (let sx = obs.x; sx < obs.x + obs.w; sx += 10) {
-      ctx.beginPath(); ctx.moveTo(sx, obs.y); ctx.lineTo(sx + 5, obs.y - 7); ctx.lineTo(sx + 10, obs.y); ctx.fill();
+      ctx.fillStyle = '#e040fb'; ctx.font = '12px monospace'; ctx.textAlign = 'center'; ctx.fillText('↓ 滑铲', obs.x + obs.w/2, obs.y - 5);
+    } else {
+      const isTall = obs.type === 'tall';
+      ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(obs.x + 3, obs.y + 3, obs.w, obs.h);
+      ctx.fillStyle = isTall ? '#1a1a1a' : '#222'; ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
+      ctx.strokeStyle = isTall ? '#ff1744' : '#e53935'; ctx.lineWidth = 2; ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
+      ctx.fillStyle = '#c62828'; const sw = 6;
+      for (let sx = obs.x; sx < obs.x + obs.w; sx += sw * 2) ctx.fillRect(sx, obs.y, Math.min(sw, obs.x + obs.w - sx), isTall ? 8 : 6);
+      ctx.fillStyle = '#d32f2f';
+      for (let sx = obs.x; sx < obs.x + obs.w; sx += 10) { ctx.beginPath(); ctx.moveTo(sx, obs.y); ctx.lineTo(sx + 5, obs.y - 7); ctx.lineTo(sx + 10, obs.y); ctx.fill(); }
     }
   }
 
   // Coins
   for (const coin of coins) {
     if (coin.collected) continue;
+    if (coin.x < visLeft - 30 || coin.x > visRight) continue;
     const cx = coin.x, cy = coin.y;
     ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 10;
     ctx.fillStyle = '#ffcc00'; ctx.fillRect(cx - 7, cy - 7, 14, 14);
     ctx.shadowBlur = 0;
     ctx.fillStyle = '#fff9c4'; ctx.fillRect(cx - 3, cy - 5, 6, 6);
-    ctx.fillStyle = '#b8860b'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
-    ctx.fillText('$', cx, cy + 3);
+    ctx.fillStyle = '#b8860b'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center'; ctx.fillText('$', cx, cy + 3);
   }
 
-  // Portal
-  const glowAlpha = 0.3 + Math.sin(portal.glow) * 0.2;
-  ctx.shadowColor = '#00ff88'; ctx.shadowBlur = 14 + Math.sin(portal.glow) * 8;
-  ctx.fillStyle = '#00e676'; ctx.fillRect(portal.x, portal.y, portal.w, portal.h);
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = `rgba(0,255,136,${glowAlpha})`; ctx.fillRect(portal.x - 4, portal.y - 4, portal.w + 8, portal.h + 8);
-  ctx.strokeStyle = '#00ff88'; ctx.lineWidth = 3; ctx.strokeRect(portal.x, portal.y, portal.w, portal.h);
-  ctx.fillStyle = '#fff'; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center';
-  ctx.fillText('毕业', portal.x + portal.w/2, portal.y + portal.h/2 - 3);
-  ctx.fillText('🚪', portal.x + portal.w/2, portal.y + portal.h/2 + 16);
-
-  // Goose — simple relentless pursuer
-  let gooseScreenX = goose.x - camera.x;
-  let gooseVisible = gooseScreenX > -60 && gooseScreenX < W + 40;
-
-  if (gooseVisible) {
+  // Goose
+  const gooseScreenX = goose.x - camera.x;
+  if (gooseScreenX > -60 && gooseScreenX < W + 40) {
     const gx = goose.x, gy = GROUND_Y - GOOSE_SIZE, gw = GOOSE_SIZE, gh = GOOSE_SIZE;
-    const gDist = player.x - goose.x;
-    const angry = gDist < 120;
+    const gDist = player.x - goose.x, angry = gDist < 120;
     ctx.shadowColor = '#ff4444'; ctx.shadowBlur = angry ? 28 : 16;
-    ctx.fillStyle = angry ? '#d32f2f' : '#e53935';
-    ctx.fillRect(gx, gy, gw, gh);
+    ctx.fillStyle = angry ? '#d32f2f' : '#e53935'; ctx.fillRect(gx, gy, gw, gh);
     ctx.shadowBlur = 0;
     ctx.strokeStyle = '#ff6666'; ctx.lineWidth = 3; ctx.strokeRect(gx, gy, gw, gh);
-    // Eyes
     ctx.fillStyle = '#fff'; ctx.fillRect(gx + 7, gy + 7, 8, 8); ctx.fillRect(gx + 21, gy + 7, 8, 8);
     ctx.fillStyle = '#000';
     const eyeX = angry ? 3 : 0;
     ctx.fillRect(gx + 10 + eyeX, gy + 10, 4, 4); ctx.fillRect(gx + 24 + eyeX, gy + 10, 4, 4);
-    // Angry brows
     ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(gx + 7, gy + (angry ? 4 : 5)); ctx.lineTo(gx + 15, gy + 8); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(gx + 29, gy + (angry ? 4 : 5)); ctx.lineTo(gx + 21, gy + 8); ctx.stroke();
-    // Beak
     ctx.fillStyle = angry ? '#f44336' : '#ff9800';
     ctx.beginPath(); ctx.moveTo(gx + 36, gy + 13); ctx.lineTo(gx + (angry ? 54 : 50), gy + 18); ctx.lineTo(gx + 36, gy + 23); ctx.fill();
-    // Label
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
-    ctx.fillText('TCAMP', gx + gw/2, gy - 4);
-    // Speed lines when angry
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center'; ctx.fillText('TCAMP', gx + gw/2, gy - 4);
     if (angry) {
       ctx.strokeStyle = '#ff444488'; ctx.lineWidth = 1;
-      for (let l = 0; l < 3; l++) {
-        const lx = gx - 8 - l * 6;
-        ctx.beginPath(); ctx.moveTo(lx, gy); ctx.lineTo(lx - 10, gy); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(lx, gy + gh); ctx.lineTo(lx - 10, gy + gh); ctx.stroke();
-      }
+      for (let l = 0; l < 3; l++) { const lx = gx - 8 - l * 6; ctx.beginPath(); ctx.moveTo(lx, gy); ctx.lineTo(lx - 10, gy); ctx.stroke(); ctx.beginPath(); ctx.moveTo(lx, gy + gh); ctx.lineTo(lx - 10, gy + gh); ctx.stroke(); }
     }
   }
 
@@ -606,20 +452,12 @@ function draw() {
   const pitFade = player.pitFalling > 0 ? (player.pitFalling / 45) : 1;
   ctx.globalAlpha = pitFade;
   if (player.pitFalling > 0) {
-    // Falling into pit — shrink & darken
-    const s = 0.5 + pitFade * 0.5;
-    const fx = player.x + player.w * (1 - s) / 2;
-    const fy = player.y + player.h * (1 - s);
-    ctx.fillStyle = '#555';
-    ctx.fillRect(fx, fy, player.w * s, player.h * s);
-    ctx.fillStyle = '#ff444488';
-    ctx.font = 'bold 14px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('😱', player.x + player.w / 2, player.y + player.h / 2 + 6);
+    const s = 0.5 + pitFade * 0.5, fx = player.x + player.w * (1 - s) / 2, fy = player.y + player.h * (1 - s);
+    ctx.fillStyle = '#555'; ctx.fillRect(fx, fy, player.w * s, player.h * s);
+    ctx.fillStyle = '#ff444488'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'; ctx.fillText('😱', player.x + player.w / 2, player.y + player.h / 2 + 6);
   } else if (player.sliding) {
     const slideY = GROUND_Y - 16;
-    ctx.fillStyle = '#ffffff44'; ctx.fillRect(player.x - 4, slideY + 10, 8, 6);
-    ctx.fillRect(player.x + player.w - 4, slideY + 10, 8, 6);
+    ctx.fillStyle = '#ffffff44'; ctx.fillRect(player.x - 4, slideY + 10, 8, 6); ctx.fillRect(player.x + player.w - 4, slideY + 10, 8, 6);
     ctx.fillStyle = '#42a5f5'; ctx.fillRect(player.x, slideY, player.w + 6, 14);
     ctx.strokeStyle = '#90caf9'; ctx.lineWidth = 2; ctx.strokeRect(player.x, slideY, player.w + 6, 14);
     ctx.fillStyle = '#fff'; ctx.fillRect(player.x + 3, slideY + 2, 7, 7); ctx.fillRect(player.x + 20, slideY + 2, 7, 7);
@@ -629,12 +467,10 @@ function draw() {
     const stumbleFlash = player.stumble > 0 && Math.floor(player.stumble / 4) % 2 === 0;
     const bobY = player.onGround ? Math.abs(Math.sin(player.runFrame * 0.25)) * 3 : 0;
     const stBob = player.stumble > 0 ? Math.abs(Math.sin(player.stumble * 0.5)) * 8 : 0;
-    const pColor = stumbleFlash ? '#ff8844' : '#42a5f5';
-    const pStroke = stumbleFlash ? '#ffaa66' : '#90caf9';
+    const pColor = stumbleFlash ? '#ff8844' : '#42a5f5', pStroke = stumbleFlash ? '#ffaa66' : '#90caf9';
     ctx.fillStyle = pColor; ctx.fillRect(player.x, player.y - bobY - stBob, player.w, player.h);
     ctx.strokeStyle = pStroke; ctx.lineWidth = 3; ctx.strokeRect(player.x, player.y - bobY - stBob, player.w, player.h);
     if (player.stumble > 0 && stumbleFlash) {
-      // X eyes while stumbling
       ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(player.x + 5, player.y + 7); ctx.lineTo(player.x + 13, player.y + 15); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(player.x + 13, player.y + 7); ctx.lineTo(player.x + 5, player.y + 15); ctx.stroke();
@@ -644,125 +480,71 @@ function draw() {
       ctx.fillStyle = '#fff'; ctx.fillRect(player.x + 5, player.y + 7 - bobY - stBob, 8, 8); ctx.fillRect(player.x + 19, player.y + 7 - bobY - stBob, 8, 8);
       ctx.fillStyle = '#000'; ctx.fillRect(player.x + 8, player.y + 10 - bobY - stBob, 4, 4); ctx.fillRect(player.x + 22, player.y + 10 - bobY - stBob, 4, 4);
     }
-    if (player.stumble <= 0) {
-      ctx.fillStyle = '#1565c0'; ctx.fillRect(player.x + 2, player.y - 7 - bobY, 28, 10);
-      ctx.fillStyle = '#0d47a1'; ctx.fillRect(player.x + 18, player.y - 1 - bobY, 12, 4);
-    }
-    // Double-jump indicator
-    if (!player.onGround && player.jumpsUsed === 1) {
-      ctx.fillStyle = '#ffffff66'; ctx.fillRect(player.x + 10, player.y - bobY + player.h + 4, 12, 4);
-    }
+    if (player.stumble <= 0) { ctx.fillStyle = '#1565c0'; ctx.fillRect(player.x + 2, player.y - 7 - bobY, 28, 10); ctx.fillStyle = '#0d47a1'; ctx.fillRect(player.x + 18, player.y - 1 - bobY, 12, 4); }
+    if (!player.onGround && player.jumpsUsed === 1) { ctx.fillStyle = '#ffffff66'; ctx.fillRect(player.x + 10, player.y - bobY + player.h + 4, 12, 4); }
   }
   ctx.globalAlpha = 1;
 
-  // Trail particles (behind player)
-  for (const tp of trailParticles) {
-    ctx.globalAlpha = tp.life / 26;
-    ctx.fillStyle = '#90caf9';
-    ctx.fillRect(tp.x - tp.size/2, tp.y - tp.size/2, tp.size, tp.size);
-  }
-  ctx.globalAlpha = 1;
-
+  // Trail
+  for (const tp of trailParticles) { ctx.globalAlpha = tp.life / 26; ctx.fillStyle = '#90caf9'; ctx.fillRect(tp.x - tp.size/2, tp.y - tp.size/2, tp.size, tp.size); } ctx.globalAlpha = 1;
   // Particles
-  for (const p of particles) {
-    ctx.globalAlpha = p.life / 60; ctx.fillStyle = p.color;
-    ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
-  }
-  ctx.globalAlpha = 1;
-
+  for (const p of particles) { ctx.globalAlpha = p.life / 60; ctx.fillStyle = p.color; ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size); } ctx.globalAlpha = 1;
   // Popups
-  for (const p of popups) {
-    ctx.globalAlpha = p.life / 40; ctx.fillStyle = p.color;
-    ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center';
-    ctx.fillText(p.text, p.x - camera.x, p.y);
-  }
-  ctx.globalAlpha = 1;
+  for (const p of popups) { ctx.globalAlpha = p.life / 40; ctx.fillStyle = p.color; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center'; ctx.fillText(p.text, p.x - camera.x, p.y); } ctx.globalAlpha = 1;
 
   ctx.restore();
 
   // ===== HUD =====
-  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, 52);
-  ctx.fillStyle = '#ffcc00'; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'left';
-  ctx.fillText(`⭐ ${score}`, 16, 32);
-  ctx.fillStyle = '#ffd700'; ctx.font = 'bold 14px monospace';
-  ctx.fillText(`💰 ${coinCount}  (+${coinScore})`, 16, 50);
-  ctx.fillStyle = '#fff'; ctx.font = '12px monospace'; ctx.textAlign = 'right';
-  ctx.fillText(`距离 ${distanceScore}  |  速度 ${playerSpeed.toFixed(1)}x`, W - 16, 30);
-  ctx.fillStyle = '#aaa';
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, 56);
+  ctx.fillStyle = '#ffcc00'; ctx.font = 'bold 24px monospace'; ctx.textAlign = 'left';
+  ctx.fillText('⭐ ' + score + '  (' + distanceScore + 'm)', 16, 34);
+  ctx.fillStyle = '#ffd700'; ctx.font = 'bold 13px monospace';
+  ctx.fillText('💰 ' + coinCount + '  |  速度 ' + playerSpeed.toFixed(1) + 'x', 16, 52);
+
+  // Goose distance (prominent)
   const gap = Math.floor(player.x - goose.x);
-  const gapWarn = gap < 60 ? '⚠ ' : gap < 150 ? '· ' : '';
-  ctx.fillStyle = gap < 60 ? '#ff4444' : gap < 150 ? '#ffcc00' : '#4caf50';
-  ctx.fillText(gapWarn + '距鹅: ' + gap + 'm', W - 16, 40);
-  ctx.fillStyle = '#aaa';
-  ctx.fillText('进度 ' + Math.floor(Math.min(player.x/MAP_WIDTH,1)*100) + '%', W - 16, 48);
+  ctx.font = 'bold 16px monospace'; ctx.textAlign = 'right';
+  ctx.fillStyle = gap < 50 ? '#ff4444' : gap < 150 ? '#ffcc00' : '#4caf50';
+  const gapIcon = gap < 50 ? '⚠ ' : gap < 150 ? '' : '';
+  ctx.fillText(gapIcon + '距鹅: ' + gap + 'm', W - 16, 34);
+  ctx.fillStyle = '#aaa'; ctx.font = '12px monospace';
+  ctx.fillText('里程碑: ' + (Math.floor(player.x / 1000) * 100) + 'm', W - 16, 52);
 
-  const prog = Math.min((player.x / MAP_WIDTH) * 100, 100);
-  ctx.fillStyle = 'rgba(255,255,255,0.1)'; ctx.fillRect(0, 56, W, 6);
-  const barGrad = ctx.createLinearGradient(0, 0, W, 0);
-  barGrad.addColorStop(0, '#42a5f5'); barGrad.addColorStop(0.7, '#7c4dff'); barGrad.addColorStop(1, '#00e676');
-  ctx.fillStyle = barGrad; ctx.fillRect(0, 56, W * (prog / 100), 6);
-  for (let t = 1; t <= 4; t++) {
-    ctx.fillStyle = '#ffffff66'; ctx.fillRect((t / 5) * W - 1, 54, 2, 10);
-  }
-
-  ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '12px monospace'; ctx.textAlign = 'center';
-  ctx.fillText('Space 跳跃(长按更高/二段跳) | S 滑铲 | R 重来', W / 2, H - 10);
-
-  // Combo display
+  // Combo
   if (gameState === 'playing' && combo >= 2) {
     ctx.fillStyle = combo >= 7 ? '#ff4444' : '#ffcc00';
-    ctx.font = `bold ${combo >= 7 ? 22 : 16}px monospace`;
-    ctx.textAlign = 'right';
-    ctx.fillText(`${combo}x Combo!${combo >= 7 ? ' 🔥' : ''}`, W - 16, 90);
+    ctx.font = 'bold ' + (combo >= 7 ? 22 : 16) + 'px monospace'; ctx.textAlign = 'right';
+    ctx.fillText(combo + 'x Combo!' + (combo >= 7 ? ' 🔥' : ''), W - 16, 72);
   }
 
-  // Jump-state debug (top-right)
-  if (gameState === 'playing') {
-    ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = '11px monospace'; ctx.textAlign = 'right';
-    var dbg = [];
-    dbg.push('滑铲:' + (player.sliding?'是':'否') + ' ' + player.slideTimer);
-    dbg.push('距鹅:' + Math.floor(player.x-goose.x) + 'm');
-    dbg.push('踉跄:' + player.stumble);
-    ctx.fillText(dbg.join('  |  '), W - 16, 72);
-  }
+  // Control hint
+  ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '12px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('Space 跳跃(长按更高/二段跳) | S 滑铲 | R 重来', W / 2, H - 10);
 
   // Screen shake + vignette
   const gooseDist = player.x - goose.x;
   let shakeX = 0, shakeY = 0;
-  if (gooseDist < 100 && screenShake > 0) {
-    shakeX = (Math.random() - 0.5) * screenShake * 2;
-    shakeY = (Math.random() - 0.5) * screenShake * 2;
-  }
-
+  if (gooseDist < 100 && screenShake > 0) { shakeX = (Math.random() - 0.5) * screenShake * 2; shakeY = (Math.random() - 0.5) * screenShake * 2; }
   if (gooseDist < 300 && gameState === 'playing') {
     const danger = 1 - Math.min(1, Math.max(0, gooseDist) / 300);
-    // Vignette gradient from edges
     const vg = ctx.createRadialGradient(W/2 + shakeX, H/2 + shakeY, W * 0.5, W/2, H/2, W * 0.8);
-    vg.addColorStop(0, 'rgba(0,0,0,0)');
-    vg.addColorStop(1, 'rgba(255,0,0,' + (danger * 0.35) + ')');
+    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(255,0,0,' + (danger * 0.35) + ')');
     ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
-    if (gooseDist < 80) {
-      ctx.fillStyle = '#ff4444'; ctx.font = 'bold 24px monospace'; ctx.textAlign = 'center';
-      ctx.fillText('⚠ 要被追上了! ⚠', W / 2 + shakeX, H / 2 + 120 + shakeY);
-    }
+    if (gooseDist < 80) { ctx.fillStyle = '#ff4444'; ctx.font = 'bold 24px monospace'; ctx.textAlign = 'center'; ctx.fillText('⚠ 要被追上了! ⚠', W/2 + shakeX, H/2 + 120 + shakeY); }
   }
 
   // Overlays
   if (gameState === 'waiting') {
     ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#ffcc00'; ctx.font = 'bold 46px monospace'; ctx.textAlign = 'center';
-    ctx.fillText('Tcamp 鹅追击', W / 2, H / 2 - 110);
+    ctx.fillStyle = '#ffcc00'; ctx.font = 'bold 42px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('Tcamp 鹅追击', W / 2, H / 2 - 100);
     ctx.fillStyle = '#fff'; ctx.font = '14px monospace';
-    ctx.fillText('自动向右奔跑，收集金币，跑到传送门毕业!', W / 2, H / 2 - 50);
-    ctx.fillText('Space = 跳跃 (长按更高 / 二段跳)   S = 滑铲', W / 2, H / 2 - 20);
-    ctx.fillText('🟦 小障碍   🟥 大障碍   ⬛ 深坑   🟪 横梁(滑铲!)', W / 2, H / 2 + 10);
-    if (highScore > 0) {
-      ctx.fillStyle = '#ffd700';
-      ctx.font = 'bold 18px monospace';
-      ctx.fillText('🏆 最高分: ' + highScore, W / 2, H / 2 + 45);
-    }
-    ctx.fillStyle = '#ffcc00'; ctx.font = 'bold 22px monospace';
-    ctx.fillText('按 Space 或 点击屏幕 开始', W / 2, H / 2 + (highScore > 0 ? 82 : 65));
+    ctx.fillText('无限跑酷 — 躲开障碍，逃离大鹅的追击!', W / 2, H / 2 - 45);
+    ctx.fillText('Space = 跳跃 (长按更高/二段跳)   S = 滑铲', W / 2, H / 2 - 18);
+    ctx.fillText('🟦 小障碍   🟥 大障碍   🟪 横梁(滑铲!)   ⬛ 深坑', W / 2, H / 2 + 12);
+    if (highScore > 0) { ctx.fillStyle = '#ffd700'; ctx.font = 'bold 18px monospace'; ctx.fillText('🏆 最高记录: ' + highScore + '  (' + Math.floor(highScore) + 'm)', W / 2, H / 2 + 48); }
+    ctx.fillStyle = '#ffcc00'; ctx.font = 'bold 20px monospace';
+    ctx.fillText('按 Space 或 点击屏幕 开始', W / 2, H / 2 + (highScore > 0 ? 80 : 60));
   }
   if (gameState === 'countdown') {
     ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(0, 0, W, H);
@@ -773,30 +555,13 @@ function draw() {
   if (gameState === 'over') {
     ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = '#e53935'; ctx.font = 'bold 48px monospace'; ctx.textAlign = 'center';
-    ctx.fillText('GAME OVER', W / 2, H / 2 - 40);
-    ctx.fillStyle = '#ffcc00'; ctx.font = 'bold 20px monospace';
-    ctx.fillText('最终得分: ' + score, W / 2, H / 2 + 10);
-    if (score >= highScore && score > 0) {
-      ctx.fillStyle = '#ffd700'; ctx.font = 'bold 16px monospace';
-      ctx.fillText('🏆 新纪录! 🏆', W / 2, H / 2 + 35);
-    }
-    ctx.fillStyle = '#fff'; ctx.font = '14px monospace';
-    ctx.fillText((score >= highScore && score > 0 ? '🆕 最高!  ' : '') + '金币 ' + coinCount + '  距离 ' + distanceScore, W / 2, H / 2 + 55);
-    ctx.font = '18px monospace'; ctx.fillText('按 R 键重新挑战', W / 2, H / 2 + 85);
-  }
-  if (gameState === 'victory') {
-    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#00e676'; ctx.font = 'bold 48px monospace'; ctx.textAlign = 'center';
-    ctx.fillText('VICTORY!', W / 2, H / 2 - 40);
-    ctx.fillStyle = '#ffcc00'; ctx.font = 'bold 20px monospace';
-    ctx.fillText('最终得分: ' + score, W / 2, H / 2 + 10);
-    if (score >= highScore && score > 0) {
-      ctx.fillStyle = '#ffd700'; ctx.font = 'bold 16px monospace';
-      ctx.fillText('🏆 新纪录! 🏆', W / 2, H / 2 + 35);
-    }
-    ctx.fillStyle = '#fff'; ctx.font = '14px monospace';
-    ctx.fillText((score >= highScore && score > 0 ? '🆕 最高!  ' : '') + '金币 ' + coinCount + '  距离 ' + distanceScore + '  🎓 毕业!', W / 2, H / 2 + 55);
-    ctx.font = '18px monospace'; ctx.fillText('按 R 键再来一局', W / 2, H / 2 + 85);
+    ctx.fillText('GAME OVER', W / 2, H / 2 - 55);
+    ctx.fillStyle = '#ffcc00'; ctx.font = 'bold 22px monospace';
+    ctx.fillText('得分: ' + score + '  |  跑了 ' + distanceScore + 'm', W / 2, H / 2 - 10);
+    if (score >= highScore && score > 0) { ctx.fillStyle = '#ffd700'; ctx.font = 'bold 18px monospace'; ctx.fillText('🏆 新纪录! 🏆', W / 2, H / 2 + 20); }
+    ctx.fillStyle = '#fff'; ctx.font = '13px monospace';
+    ctx.fillText('金币 ' + coinCount + '  |  速度 ' + playerSpeed.toFixed(1) + 'x  |  连击 ' + combo + 'x', W / 2, H / 2 + 48);
+    ctx.font = '18px monospace'; ctx.fillText('按 R 键重新挑战', W / 2, H / 2 + 80);
   }
 }
 
@@ -805,4 +570,3 @@ reset(); gameLoop();
 </script>
 </body>
 </html>
-<!-- cache-bust v2 -->
