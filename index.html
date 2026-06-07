@@ -30,7 +30,7 @@ let speedTier, distanceScore, coinScore, coinCount, score;
 let lastObstacleX, generatorIndex;
 let jumpRequested, spaceWasDown;
 let particles, popups, trailParticles;
-let combo, screenShake, highScore;
+let combo, screenShake, highScore, comboFx, comboShake;
 let playerSpeed;
 
 // --- Run statistics ---
@@ -156,7 +156,12 @@ function addPopup(x, y, text, color) {
 }
 function spawnParticles(x, y, color, count) {
   for (let i = 0; i < count; i++) {
-    particles.push({ x, y, vx: (Math.random() - 0.5) * 8, vy: (Math.random() - 1) * 8, life: 40 + Math.random() * 20, color, size: 2 + Math.random() * 4 });
+    particles.push({ x, y, vx: (Math.random() - 0.5) * 8, vy: (Math.random() - 1) * 8, life: 40 + Math.random() * 20, color, size: 2 + Math.random() * 4, type: 'dot' });
+  }
+}
+function spawnFlames(x, y, count) {
+  for (let i = 0; i < count; i++) {
+    particles.push({ x: x + (Math.random() - 0.5) * 60, y: y + (Math.random() - 0.5) * 30, vx: (Math.random() - 0.5) * 3, vy: -(2 + Math.random() * 5), life: 25 + Math.random() * 20, color: '#ff' + ['4400', '6600', '8800', 'aa00'][i % 4], size: 4 + Math.random() * 6, type: 'flame' });
   }
 }
 
@@ -318,21 +323,65 @@ function update() {
     }
   }
 
-  // Combo detection
+  // Combo detection + escalation effects
+  const comboBefore = combo;
   for (const obs of obstacles) {
     if (obs.cleared) continue;
     if (obs.type === 'pit') { if (player.x > obs.x + obs.w + 40) obs.cleared = true; continue; }
     if (player.x > obs.x + obs.w + 40) {
       obs.cleared = true; combo++;
       if (combo > runStats.maxCombo) runStats.maxCombo = combo;
-      let bonus = 0, msg = '';
-      if (combo >= 7)      { bonus = combo * 10; msg = combo + 'x Combo! 🔥'; }
-      else if (combo >= 4) { bonus = combo * 6;  msg = combo + 'x Combo!'; }
-      else if (combo >= 2) { bonus = combo * 3;  msg = combo + 'x Combo!'; }
-      coinScore += bonus; score = distanceScore + coinScore;
-      if (bonus > 0) addPopup(obs.x + obs.w/2, obs.y - 20, '+' + bonus + ' ' + msg, (combo >= 7 ? '#ff4444' : '#ffcc00'));
     }
   }
+  // Escalate bonus at breakpoints (fired only once per threshold)
+  if (combo > comboBefore) {
+    const prevBonus = comboBefore >= 20 ? 20 : comboBefore >= 10 ? 10 : comboBefore >= 5 ? 5 : 0;
+    const newBonus  = combo        >= 20 ? 20 : combo        >= 10 ? 10 : combo        >= 5 ? 5 : 0;
+    const baseScore = combo * 3;
+    coinScore += baseScore; score = distanceScore + coinScore;
+    addPopup(player.x, player.y - 30, '+' + baseScore, '#ffcc00');
+
+    // === Escalation pop effect (fires once when threshold crossed) ===
+    if (newBonus > prevBonus) {
+      comboFx = { timer: 50, tier: newBonus === 20 ? 3 : newBonus === 10 ? 2 : 1 };
+      comboShake = newBonus === 20 ? 25 : newBonus === 10 ? 10 : 0;
+      if (newBonus === 20) {
+        // RED TIER: 50 particles + 12 flames + screen flash + goose recoil
+        spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 30);
+        spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ffcc00', 12);
+        spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ffffff', 8);
+        spawnFlames(player.x + player.w/2, player.y, 12);
+        goose.x = Math.max(-500, goose.x - 40);
+        spawnParticles(goose.x + goose.w/2, goose.y + goose.h/2, '#ffcc00', 8);
+      } else if (newBonus === 10) {
+        // GOLD TIER: 20 particles spiral + corners pulse
+        spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ffaa00', 15);
+        spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ffcc00', 8);
+        goose.x = Math.max(-500, goose.x - 15);
+      } else {
+        // GREEN TIER: 12 particles
+        spawnParticles(player.x + player.w/2, player.y + player.h/2, '#4caf50', 8);
+        spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ffffff', 4);
+      }
+    }
+  }
+
+  // Combo-break: when player hits a wall while having a combo going
+  if (player.stumble > 0 && comboBefore >= 5) {
+    coinScore -= Math.floor(comboBefore * 2); // small penalty
+    score = distanceScore + coinScore;
+    addPopup(player.x, player.y - 40, 'Combo Lost!', '#888');
+    spawnParticles(player.x + player.w/2, player.y + player.h/2, '#888', 6);
+    comboFx = null;
+    combo = 0;
+  }
+
+  // Tick down combo effect timer
+  if (comboFx) {
+    comboFx.timer--;
+    if (comboFx.timer <= 0) comboFx = null;
+  }
+  if (comboShake > 0) comboShake = Math.max(0, comboShake - 0.8);
 
   // Milestones every 100m
   const milestone = Math.floor(player.x / 1000) * 100;
@@ -583,7 +632,14 @@ function draw() {
   // Trail
   for (const tp of trailParticles) { ctx.globalAlpha = tp.life / 26; ctx.fillStyle = '#90caf9'; ctx.fillRect(tp.x - tp.size/2, tp.y - tp.size/2, tp.size, tp.size); } ctx.globalAlpha = 1;
   // Particles
-  for (const p of particles) { ctx.globalAlpha = p.life / 60; ctx.fillStyle = p.color; ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size); } ctx.globalAlpha = 1;
+  for (const p of particles) {
+    ctx.globalAlpha = p.life / 60; ctx.fillStyle = p.color;
+    if (p.type === 'flame') {
+      ctx.beginPath(); ctx.moveTo(p.x, p.y - p.size); ctx.lineTo(p.x - p.size/2, p.y + p.size/2); ctx.lineTo(p.x + p.size/2, p.y + p.size/2); ctx.fill();
+    } else {
+      ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+    }
+  } ctx.globalAlpha = 1;
   // Popups
   for (const p of popups) { ctx.globalAlpha = p.life / 40; ctx.fillStyle = p.color; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center'; ctx.fillText(p.text, p.x - camera.x, p.y); } ctx.globalAlpha = 1;
 
@@ -606,11 +662,46 @@ function draw() {
   ctx.fillStyle = '#aaa'; ctx.font = '12px monospace';
   ctx.fillText('里程碑: ' + (Math.floor(player.x / 1000) * 100) + 'm', W - 16, 52);
 
-  // Combo
-  if (gameState === 'playing' && combo >= 2) {
-    ctx.fillStyle = combo >= 7 ? '#ff4444' : '#ffcc00';
-    ctx.font = 'bold ' + (combo >= 7 ? 22 : 16) + 'px monospace'; ctx.textAlign = 'right';
-    ctx.fillText(combo + 'x Combo!' + (combo >= 7 ? ' 🔥' : ''), W - 16, 72);
+  // Combo HUD
+  if (gameState === 'playing' && combo >= 5) {
+    const cLevel = combo >= 20 ? 3 : combo >= 10 ? 2 : 1;
+    const cColor = cLevel === 3 ? '#ff4444' : cLevel === 2 ? '#ffaa00' : '#4caf50';
+    const cSize  = cLevel === 3 ? 24 : cLevel === 2 ? 20 : 16;
+    const cLabel = cLevel === 3 ? ' UNSTOPPABLE!' : cLevel === 2 ? ' On Fire!' : ' Combo!';
+    ctx.fillStyle = cColor;
+    ctx.font = 'bold ' + cSize + 'px monospace'; ctx.textAlign = 'right';
+    ctx.fillText(combo + 'x' + cLabel, W - 16, 72);
+  }
+
+  // Combo FX pop — big floating text with scale bounce
+  if (gameState === 'playing' && comboFx) {
+    const ft = comboFx.timer / 50;
+    const fScale = 1.2 - ft * 0.6;
+    const fAlpha = Math.min(1, ft * 3);
+    const fColor = comboFx.tier === 3 ? '#ff4444' : comboFx.tier === 2 ? '#ffaa00' : '#4caf50';
+    const fText  = comboFx.tier === 3 ? '🔥 UNSTOPPABLE! 🔥' : comboFx.tier === 2 ? 'ON FIRE!' : 'NICE!';
+    const fSize  = comboFx.tier === 3 ? 42 : comboFx.tier === 2 ? 32 : 26;
+    ctx.save();
+    ctx.globalAlpha = fAlpha;
+    ctx.fillStyle = fColor;
+    ctx.font = 'bold ' + fSize + 'px monospace';
+    ctx.textAlign = 'center';
+    ctx.translate(W/2, H/2 - 40);
+    ctx.scale(fScale, fScale);
+    ctx.fillText(fText, 0, 0);
+    ctx.restore();
+
+    // Corner pulse
+    if (comboFx.tier >= 2) {
+      const cp = comboFx.tier === 3 ? 1 : 0.6;
+      const ca = fAlpha * cp;
+      const cw = comboFx.tier === 3 ? 80 : 50;
+      ctx.fillStyle = 'rgba(' + (comboFx.tier === 3 ? '255,68,68' : '255,170,0') + ',' + ca + ')';
+      ctx.fillRect(0, 0, cw, 6); ctx.fillRect(W - cw, 0, cw, 6);
+      ctx.fillRect(0, H - 6, cw, 6); ctx.fillRect(W - cw, H - 6, cw, 6);
+      ctx.fillRect(0, 0, 6, cw); ctx.fillRect(W - 6, 0, 6, cw);
+      ctx.fillRect(0, H - cw, 6, cw); ctx.fillRect(W - 6, H - cw, 6, cw);
+    }
   }
 
   // Control hint
@@ -620,7 +711,8 @@ function draw() {
   // Screen shake + vignette
   const gooseDist = player.x - goose.x;
   let shakeX = 0, shakeY = 0;
-  if (gooseDist < 100 && screenShake > 0) { shakeX = (Math.random() - 0.5) * screenShake * 2; shakeY = (Math.random() - 0.5) * screenShake * 2; }
+  const totalShake = screenShake + (comboShake || 0);
+  if (gooseDist < 100 && totalShake > 0) { shakeX = (Math.random() - 0.5) * totalShake * 2; shakeY = (Math.random() - 0.5) * totalShake * 2; }
   if (gooseDist < 300 && gameState === 'playing') {
     const danger = 1 - Math.min(1, Math.max(0, gooseDist) / 300);
     const vg = ctx.createRadialGradient(W/2 + shakeX, H/2 + shakeY, W * 0.5, W/2, H/2, W * 0.8);
