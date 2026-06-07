@@ -32,6 +32,7 @@ let spaceWasDown = false;
 let combo = 0;
 let milestonesTriggered = { 25: false, 50: false, 75: false };
 let trailParticles = [];
+let screenShake = 0;
 let highScore = 0;
 try { highScore = parseInt(localStorage.getItem('tcampHighScore')) || 0; } catch(e) {}
 
@@ -45,8 +46,7 @@ function reset() {
     jumpHeld: false, jumpsUsed: 0,
     stumble: 0, pitFalling: 0
   };
-  goose = { x: -40, y: GROUND_Y - GOOSE_SIZE, w: GOOSE_SIZE, h: GOOSE_SIZE, speed: 1.4,
-    vy: 0, onGround: true, aiState: 'run', aiTimer: 0, aiTarget: null };
+  goose = { x: -40, y: GROUND_Y - GOOSE_SIZE, w: GOOSE_SIZE, h: GOOSE_SIZE };
   jumpRequested = 0;
   spaceWasDown = false;
 
@@ -423,66 +423,28 @@ function update() {
   }
   if (player.stumble > 0) player.stumble--;
 
-  // ===== GOOSE AI: perfect obstacle avoidance =====
-  // Find the next uncleared obstacle ahead of the goose
-  let nextObs = null;
-  for (const obs of obstacles) {
-    if (obs.x > goose.x + goose.w) { nextObs = obs; break; }
-  }
-
-  // Simple AI state machine
-  if (goose.aiState === 'run') {
-    goose.w = GOOSE_SIZE;
-    goose.h = GOOSE_SIZE;
-    if (nextObs && goose.x + goose.w + 70 > nextObs.x) {
-      // React to upcoming obstacle
-      if (nextObs.type === 'beam') {
-        goose.aiState = 'slide';
-        goose.aiTimer = 30;
-        goose.w = GOOSE_SIZE + 6;
-        goose.h = 14;
-        goose.y = GROUND_Y - 14;
-      } else if (nextObs.type === 'pit') {
-        goose.aiState = 'jump';
-        goose.aiTimer = 0;
-        goose.vy = -13;
-        goose.onGround = false;
-      } else {
-        const jumpPower = nextObs.type === 'tall' ? -14 : -12;
-        goose.aiState = 'jump';
-        goose.aiTimer = 0;
-        goose.vy = jumpPower;
-        goose.onGround = false;
-      }
-    }
-  }
-
-  // Goose AI gravity and ground
-  if (goose.aiState === 'jump') {
-    goose.vy += 0.45;
-    goose.y += goose.vy;
-    if (goose.y >= GROUND_Y - GOOSE_SIZE) {
-      goose.y = GROUND_Y - GOOSE_SIZE;
-      goose.vy = 0;
-      goose.onGround = true;
-      goose.aiState = 'run';
-    }
-  } else if (goose.aiState === 'slide') {
-    goose.y = GROUND_Y - 14;
-    goose.aiTimer--;
-    if (goose.aiTimer <= 0) {
-      goose.y = GROUND_Y - GOOSE_SIZE;
-      goose.aiState = 'run';
-    }
-  }
-
-  // Goose chase speed
+  // ===== GOOSE RUBBER-BAND CHASE (Temple Run style) =====
+  // Goose phases through ALL obstacles. Relentless, unblockable.
+  // Normal: goose = player × 0.92 → gap slowly widens if you run clean.
+  // Stumble: goose runs at FULL playerSpeed → closes gap FAST.
+  // Late game: chaseRatio ramps to 1.0 → zero margin for error.
   const gooseDistToPlayer = player.x - goose.x;
-  const gooseSpeed = goose.speed + progressRatio * 0.6 + (player.stumble > 0 ? 0.6 : 0);
+  const chaseRatio = 0.92 + progressRatio * 0.08; // 0.92 → 1.0
+  const gooseSpeed = player.stumble > 0
+    ? playerSpeed // stumble = goose at full speed, you at 0.3x
+    : effectiveSpeed * chaseRatio;
   goose.x += gooseSpeed;
 
-  // ===== GOOSE CATCHES PLAYER = INSTANT DEATH =====
-  if (gooseDistToPlayer < 10) {
+  // Screen shake when goose is dangerously close
+  if (gooseDistToPlayer < 100) {
+    screenShake = 100 - gooseDistToPlayer;
+    if (screenShake > 10) screenShake = 10;
+  } else {
+    screenShake = Math.max(0, screenShake - 0.5);
+  }
+
+  // Goose catches player = instant death
+  if (gooseDistToPlayer < 8) {
     spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 50);
     saveHighScore(); gameState = 'over'; return;
   }
@@ -601,37 +563,43 @@ function draw() {
   ctx.fillText('毕业', portal.x + portal.w/2, portal.y + portal.h/2 - 3);
   ctx.fillText('🚪', portal.x + portal.w/2, portal.y + portal.h/2 + 16);
 
-  // Goose
+  // Goose — simple relentless pursuer
   let gooseScreenX = goose.x - camera.x;
   let gooseVisible = gooseScreenX > -60 && gooseScreenX < W + 40;
 
   if (gooseVisible) {
-    const gx = goose.x, gy = goose.y, gw = goose.w, gh = goose.h;
-    const isSliding = goose.aiState === 'slide';
-
-    if (isSliding) {
-      // Squished slide goose
-      const sy = GROUND_Y - 14;
-      ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fillRect(gx + 2, sy + 2, gw + 4, 14);
-      ctx.fillStyle = '#c62828'; ctx.fillRect(gx, sy, gw + 4, 12);
-      ctx.strokeStyle = '#ff6666'; ctx.lineWidth = 2; ctx.strokeRect(gx, sy, gw + 4, 12);
-      ctx.fillStyle = '#fff'; ctx.fillRect(gx + 5, sy + 2, 6, 6); ctx.fillRect(gx + 18, sy + 2, 6, 6);
-      ctx.fillStyle = '#000'; ctx.fillRect(gx + 7, sy + 4, 3, 3); ctx.fillRect(gx + 20, sy + 4, 3, 3);
-    } else {
-      ctx.shadowColor = '#ff4444'; ctx.shadowBlur = 16;
-      ctx.fillStyle = '#e53935'; ctx.fillRect(gx, gy, gw, gh);
-      ctx.shadowBlur = 0;
-      ctx.strokeStyle = '#ff6666'; ctx.lineWidth = 3; ctx.strokeRect(gx, gy, gw, gh);
-      ctx.fillStyle = '#fff'; ctx.fillRect(gx + 7, gy + 7, 8, 8); ctx.fillRect(gx + 21, gy + 7, 8, 8);
-      ctx.fillStyle = '#000'; ctx.fillRect(gx + 10, gy + 10, 4, 4); ctx.fillRect(gx + 24, gy + 10, 4, 4);
-      ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(gx + 7, gy + 5); ctx.lineTo(gx + 15, gy + 8); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(gx + 29, gy + 5); ctx.lineTo(gx + 21, gy + 8); ctx.stroke();
-      ctx.fillStyle = '#ff9800';
-      ctx.beginPath(); ctx.moveTo(gx + 36, gy + 13); ctx.lineTo(gx + 50, gy + 18); ctx.lineTo(gx + 36, gy + 23); ctx.fill();
-    }
+    const gx = goose.x, gy = GROUND_Y - GOOSE_SIZE, gw = GOOSE_SIZE, gh = GOOSE_SIZE;
+    const gDist = player.x - goose.x;
+    const angry = gDist < 120;
+    ctx.shadowColor = '#ff4444'; ctx.shadowBlur = angry ? 28 : 16;
+    ctx.fillStyle = angry ? '#d32f2f' : '#e53935';
+    ctx.fillRect(gx, gy, gw, gh);
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#ff6666'; ctx.lineWidth = 3; ctx.strokeRect(gx, gy, gw, gh);
+    // Eyes
+    ctx.fillStyle = '#fff'; ctx.fillRect(gx + 7, gy + 7, 8, 8); ctx.fillRect(gx + 21, gy + 7, 8, 8);
+    ctx.fillStyle = '#000';
+    const eyeX = angry ? 3 : 0;
+    ctx.fillRect(gx + 10 + eyeX, gy + 10, 4, 4); ctx.fillRect(gx + 24 + eyeX, gy + 10, 4, 4);
+    // Angry brows
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(gx + 7, gy + (angry ? 4 : 5)); ctx.lineTo(gx + 15, gy + 8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(gx + 29, gy + (angry ? 4 : 5)); ctx.lineTo(gx + 21, gy + 8); ctx.stroke();
+    // Beak
+    ctx.fillStyle = angry ? '#f44336' : '#ff9800';
+    ctx.beginPath(); ctx.moveTo(gx + 36, gy + 13); ctx.lineTo(gx + (angry ? 54 : 50), gy + 18); ctx.lineTo(gx + 36, gy + 23); ctx.fill();
+    // Label
     ctx.fillStyle = '#fff'; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
-    ctx.fillText('TCAMP', gx + gw/2, gy - (isSliding ? 18 : 4));
+    ctx.fillText('TCAMP', gx + gw/2, gy - 4);
+    // Speed lines when angry
+    if (angry) {
+      ctx.strokeStyle = '#ff444488'; ctx.lineWidth = 1;
+      for (let l = 0; l < 3; l++) {
+        const lx = gx - 8 - l * 6;
+        ctx.beginPath(); ctx.moveTo(lx, gy); ctx.lineTo(lx - 10, gy); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(lx, gy + gh); ctx.lineTo(lx - 10, gy + gh); ctx.stroke();
+      }
+    }
   }
 
   // Player
@@ -722,8 +690,11 @@ function draw() {
   ctx.fillText(`距离 ${distanceScore}  |  速度 ${playerSpeed.toFixed(1)}x`, W - 16, 30);
   ctx.fillStyle = '#aaa';
   const gap = Math.floor(player.x - goose.x);
-  const gapColor = gap < 60 ? '#ff4444' : gap < 150 ? '#ffcc00' : '#fff';
-  ctx.fillText('距鹅: ' + gap + 'm  |  进度 ' + Math.floor(Math.min(player.x/MAP_WIDTH,1)*100) + '%', W - 16, 48);
+  const gapWarn = gap < 60 ? '⚠ ' : gap < 150 ? '· ' : '';
+  ctx.fillStyle = gap < 60 ? '#ff4444' : gap < 150 ? '#ffcc00' : '#4caf50';
+  ctx.fillText(gapWarn + '距鹅: ' + gap + 'm', W - 16, 40);
+  ctx.fillStyle = '#aaa';
+  ctx.fillText('进度 ' + Math.floor(Math.min(player.x/MAP_WIDTH,1)*100) + '%', W - 16, 48);
 
   const prog = Math.min((player.x / MAP_WIDTH) * 100, 100);
   ctx.fillStyle = 'rgba(255,255,255,0.1)'; ctx.fillRect(0, 56, W, 6);
@@ -750,18 +721,29 @@ function draw() {
     ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = '11px monospace'; ctx.textAlign = 'right';
     var dbg = [];
     dbg.push('滑铲:' + (player.sliding?'是':'否') + ' ' + player.slideTimer);
-    dbg.push('鹅AI:' + goose.aiState + ' 距:' + Math.floor(player.x-goose.x));
+    dbg.push('距鹅:' + Math.floor(player.x-goose.x) + 'm');
     dbg.push('踉跄:' + player.stumble);
     ctx.fillText(dbg.join('  |  '), W - 16, 72);
   }
 
+  // Screen shake + vignette
   const gooseDist = player.x - goose.x;
-  if (gooseDist < 250 && gameState === 'playing') {
-    const danger = 1 - Math.max(0, gooseDist) / 250;
-    ctx.fillStyle = 'rgba(255,0,0,' + (danger * 0.15) + ')'; ctx.fillRect(0, 0, W, H);
-    if (gooseDist < 100) {
-      ctx.fillStyle = '#ff4444'; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center';
-      ctx.fillText('⚠ 要被追上了! ⚠', W / 2, H / 2 + 120);
+  let shakeX = 0, shakeY = 0;
+  if (gooseDist < 100 && screenShake > 0) {
+    shakeX = (Math.random() - 0.5) * screenShake * 2;
+    shakeY = (Math.random() - 0.5) * screenShake * 2;
+  }
+
+  if (gooseDist < 300 && gameState === 'playing') {
+    const danger = 1 - Math.min(1, Math.max(0, gooseDist) / 300);
+    // Vignette gradient from edges
+    const vg = ctx.createRadialGradient(W/2 + shakeX, H/2 + shakeY, W * 0.5, W/2, H/2, W * 0.8);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, 'rgba(255,0,0,' + (danger * 0.35) + ')');
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+    if (gooseDist < 80) {
+      ctx.fillStyle = '#ff4444'; ctx.font = 'bold 24px monospace'; ctx.textAlign = 'center';
+      ctx.fillText('⚠ 要被追上了! ⚠', W / 2 + shakeX, H / 2 + 120 + shakeY);
     }
   }
 
