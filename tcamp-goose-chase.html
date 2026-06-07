@@ -423,8 +423,8 @@ function update() {
         oBox = { x: obs.x + 3, y: obs.y + 2, w: obs.w - 6, h: obs.h - 2 };
       }
       if (collides(pBox, oBox)) {
-        player.stumble = 35;
-        player.x = Math.max(100, player.x - 50);
+        player.stumble = 28;
+        player.x = Math.max(100, player.x - 30);
         player.y = GROUND_Y - player.h;
         player.vy = -4;
         player.onGround = false;
@@ -491,7 +491,7 @@ function update() {
 
   // Goose chase speed
   const gooseDistToPlayer = player.x - goose.x;
-  const gooseSpeed = goose.speed + progressRatio * 0.6 + (player.stumble > 0 ? 1.5 : 0); // speed up when player stumbles
+  const gooseSpeed = goose.speed + progressRatio * 0.6 + (player.stumble > 0 ? 0.6 : 0);
   goose.x += gooseSpeed;
 
   // ===== GOOSE CATCHES PLAYER = INSTANT DEATH =====
