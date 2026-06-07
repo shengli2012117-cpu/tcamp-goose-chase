@@ -46,7 +46,7 @@ function reset() {
     gooseHits: 0, gooseHitCooldown: 0, invincible: 0,
     pitFalling: 0
   };
-  goose = { x: -500, y: GROUND_Y - GOOSE_SIZE, w: GOOSE_SIZE, h: GOOSE_SIZE, speed: 1.4 };
+  goose = { x: -40, y: GROUND_Y - GOOSE_SIZE, w: GOOSE_SIZE, h: GOOSE_SIZE, speed: 1.4 };
   jumpRequested = 0;
   spaceWasDown = false;
 
@@ -415,30 +415,29 @@ function update() {
   if (camera.x > MAP_WIDTH - W) camera.x = MAP_WIDTH - W;
 
   // ===== UNIFIED 3-HIT SYSTEM =====
-  // Obstacle hit → push back +1 hit. Goose hit → push back + recoil goose +1 hit.
-  // 3 total hits = death. Pits = instant death (always).
+  // Any collision = +1 hit. 3 hits = death. Pits = instant death.
   if (player.gooseHitCooldown <= 0) {
     let hitThisFrame = false;
     let hitType = '';
+    let hitObs = null;
 
     // Check obstacle collisions
-    if (player.invincible <= 0) {
-      for (const obs of obstacles) {
-        if (obs.type === 'pit') continue;
-        const margin = 6;
-        const pBox = { x: player.x + margin, y: player.y + margin, w: player.w - margin*2, h: player.h - margin*2 };
-        let oBox;
-        if (obs.type === 'beam') {
-          if (player.sliding) continue;
-          oBox = { x: obs.x + 2, y: obs.y + 1, w: obs.w - 4, h: obs.h - 1 };
-        } else {
-          oBox = { x: obs.x + 3, y: obs.y + 2, w: obs.w - 6, h: obs.h - 2 };
-        }
-        if (collides(pBox, oBox)) {
-          hitThisFrame = true;
-          hitType = 'obs';
-          break;
-        }
+    for (const obs of obstacles) {
+      if (obs.type === 'pit') continue;
+      const margin = 6;
+      const pBox = { x: player.x + margin, y: player.y + margin, w: player.w - margin*2, h: player.h - margin*2 };
+      let oBox;
+      if (obs.type === 'beam') {
+        if (player.sliding) continue;
+        oBox = { x: obs.x + 2, y: obs.y + 1, w: obs.w - 4, h: obs.h - 1 };
+      } else {
+        oBox = { x: obs.x + 3, y: obs.y + 2, w: obs.w - 6, h: obs.h - 2 };
+      }
+      if (collides(pBox, oBox)) {
+        hitThisFrame = true;
+        hitType = 'obs';
+        hitObs = obs;
+        break;
       }
     }
 
@@ -454,18 +453,24 @@ function update() {
     }
 
     if (hitThisFrame) {
-      player.gooseHitCooldown = 55;
-      player.invincible = 40;
+      player.gooseHitCooldown = 60;
+      player.invincible = 80; // longer invincibility to pass through
       player.gooseHits++;
-      player.x = Math.max(100, player.x - 180);
+
       if (hitType === 'goose') {
+        player.x = Math.max(100, player.x - 180);
         goose.x = Math.max(-500, goose.x - 110);
         addPopup(player.x, player.y - 30, '被鹅撞了! ' + player.gooseHits + '/3', '#ff4444');
       } else {
+        // Teleport player PAST the obstacle so they don't get stuck
+        player.x = hitObs.x + hitObs.w + 30;
+        player.y = GROUND_Y - player.h; // ensure on ground
+        player.vy = 0;
+        player.onGround = true;
+        player.coyoteTimer = 0;
         addPopup(player.x, player.y - 30, '撞到障碍! ' + player.gooseHits + '/3', '#ff8800');
       }
       spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 20);
-
       if (player.gooseHits >= 3) {
         spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 50);
         saveHighScore(); gameState = 'over'; return;
@@ -588,8 +593,11 @@ function draw() {
   ctx.fillText('🚪', portal.x + portal.w/2, portal.y + portal.h/2 + 16);
 
   // Goose
-  const gooseScreenX = goose.x - camera.x;
-  if (gooseScreenX < W + 100) {
+  let gooseScreenX = goose.x - camera.x;
+  let gooseScreenY = goose.y;
+  let gooseVisible = gooseScreenX > -60 && gooseScreenX < W + 40;
+
+  if (gooseVisible) {
     ctx.shadowColor = '#ff4444'; ctx.shadowBlur = 16;
     ctx.fillStyle = '#e53935'; ctx.fillRect(goose.x, goose.y, goose.w, goose.h);
     ctx.shadowBlur = 0;
@@ -603,6 +611,17 @@ function draw() {
     ctx.beginPath(); ctx.moveTo(goose.x + 36, goose.y + 13); ctx.lineTo(goose.x + 50, goose.y + 18); ctx.lineTo(goose.x + 36, goose.y + 23); ctx.fill();
     ctx.fillStyle = '#fff'; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
     ctx.fillText('TCAMP', goose.x + goose.w/2, goose.y - 4);
+  }
+
+  // Left-edge warning when goose is behind but close (off-screen left)
+  if (gooseScreenX < -40 && gooseScreenX > -200) {
+    let warnAlpha = Math.min(1, Math.abs(gooseScreenX + 40) / 80);
+    ctx.fillStyle = 'rgba(255,0,0,' + (0.3 + warnAlpha * 0.7) + ')';
+    ctx.fillRect(camera.x, GROUND_Y - GOOSE_SIZE - 8, 30, GOOSE_SIZE + 8);
+    ctx.fillStyle = '#ff4444';
+    ctx.font = 'bold 20px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('🦆', camera.x + 4, GROUND_Y - 6);
   }
 
   // Player
