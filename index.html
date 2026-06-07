@@ -96,7 +96,8 @@ function reset() {
     jumpHeld: false, jumpsUsed: 0,
     stumble: 0, pitFalling: 0
   };
-  goose = { x: -40, y: GROUND_Y - GOOSE_SIZE, w: GOOSE_SIZE, h: GOOSE_SIZE };
+  goose = { x: -80, y: GROUND_Y - GOOSE_SIZE, w: GOOSE_SIZE, h: GOOSE_SIZE };
+  player._lastMilestone = 0;
   camera = { x: 0 };
   gameState = 'waiting';
   countdownTimer = 0;
@@ -177,7 +178,7 @@ function update() {
   const distInHundreds = Math.floor(player.x / 500);
   if (distInHundreds > speedTier) {
     speedTier = distInHundreds;
-    playerSpeed = BASE_SPEED + speedTier * 0.12;
+    playerSpeed = BASE_SPEED + speedTier * 0.08;
     addPopup(player.x, player.y - 40, '加速! ×' + playerSpeed.toFixed(1), '#ffcc00');
   }
 
@@ -290,8 +291,7 @@ function update() {
 
   // Milestones every 100m
   const milestone = Math.floor(player.x / 1000) * 100;
-  if (milestone > 0 && player.x % 1000 < playerSpeed + 2 && milestone >= 100) {
-    // Fire once
+  if (milestone >= 100) {
     if (!player._lastMilestone) player._lastMilestone = 0;
     if (milestone > player._lastMilestone) {
       player._lastMilestone = milestone;
@@ -337,7 +337,7 @@ function update() {
 
   // Goose rubber-band chase
   const gooseDist = player.x - goose.x;
-  const chaseRatio = 0.92 + Math.min(distanceScore / 10000, 0.08); // ramps to 100% over 10km
+  const chaseRatio = 0.88 + Math.min(distanceScore / 12000, 0.12); // 88% → 100% over 12km
   const gooseSpeed = player.stumble > 0 ? playerSpeed : effectiveSpeed * chaseRatio;
   goose.x += gooseSpeed;
 
