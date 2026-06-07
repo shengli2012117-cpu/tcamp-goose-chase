@@ -266,6 +266,7 @@ function update() {
       if (pHoriz && player.y >= GROUND_Y - player.h && player.vy >= 0) {
         spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 30);
         saveHighScore(); gameState = 'over'; return;
+      }
     }
   }
 
