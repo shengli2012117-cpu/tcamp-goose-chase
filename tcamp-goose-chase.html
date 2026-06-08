@@ -52,6 +52,18 @@ function sfxCoin() {
 function sfxJump() {
   try { JUMP_SFX.currentTime = 0; JUMP_SFX.play().catch(function(){}); } catch(e) {}
 }
+// Ascending arcade combo chime
+function sfxComboAscend(c) {
+  try {
+    const cx = new (window.AudioContext || window.webkitAudioContext)();
+    if (cx.state === 'suspended') cx.resume();
+    const n = cx.currentTime, f = 523 + (c % 8) * 65;
+    const o = cx.createOscillator(), g = cx.createGain();
+    o.type = 'square'; o.frequency.setValueAtTime(f, n);
+    g.gain.setValueAtTime(0.08, n); g.gain.linearRampToValueAtTime(0, n + 0.05);
+    o.connect(g); g.connect(cx.destination); o.start(n); o.stop(n + 0.05);
+  } catch(e) {}
+}
 // Rage explosion — keep synth but simplified to a single noise burst using a fresh AudioContext
 function sfxRage() {
   try {
@@ -84,6 +96,8 @@ let lastObstacleX, generatorIndex;
 let jumpRequested, spaceWasDown;
 let particles, popups, trailParticles;
 let combo, screenShake, highScore, comboFx, comboShake;
+let comboScale = 1.0;
+let hitStop = 0;
 let playerSpeed;
 
 // --- Run statistics ---
@@ -187,6 +201,8 @@ function reset() {
   coinCount = 0;
   score = 0;
   combo = 0;
+  comboScale = 1.0;
+  hitStop = 0;
   screenShake = 0;
   generatorIndex = 0;
   lastObstacleX = 400;
@@ -351,6 +367,9 @@ function update() {
   if (gameState === 'countdown') { countdownTimer--; if (countdownTimer <= 0) { gameState = 'playing'; try { if (bgm) bgm.play().catch(function(){}); } catch(e) {} } return; }
   if (gameState !== 'playing') return;
 
+  // Hit-stop: freeze physics for a few frames on big combo hits, draw still runs
+  if (hitStop > 0) { hitStop--; return; }
+
   // ---- Speed ramp: +0.02 every 1000px, caps at 4.0x after ~8000m HUD distance ----
   const distDiv = Math.floor(player.x / 1000);
   if (distDiv > speedTier) {
@@ -488,6 +507,9 @@ function update() {
     if (player.x > obs.x + obs.w + 40) {
       obs.cleared = true; combo++;
       if (combo > runStats.maxCombo) runStats.maxCombo = combo;
+      comboScale = 1.8;
+      sfxComboAscend(combo);
+      if (combo >= 10) hitStop = 2;
     }
   }
   // Escalate bonus at breakpoints (fired only once per threshold)
@@ -600,6 +622,9 @@ function update() {
           // RAGE: smash through — counts as perfect clear!
           obstacles = obstacles.filter(o => o !== obs);
           combo++; if (combo > runStats.maxCombo) runStats.maxCombo = combo;
+          comboScale = 1.8;
+          sfxComboAscend(combo);
+          if (combo >= 10) hitStop = 2;
           const rageBonus = combo * 3;
           coinScore += rageBonus; score = distanceScore + coinScore;
           spawnParticles(obs.x + obs.w/2, obs.y + obs.h/2, '#ffd700', 30);
@@ -1121,16 +1146,27 @@ function draw() {
   ctx.fillStyle = '#aaa'; ctx.font = '12px monospace';
   ctx.fillText('里程碑: ' + (Math.floor(player.x / 1000) * 100) + 'm', W - 16, 52);
 
-  // Combo HUD
-  if (gameState === 'playing' && combo >= 5) {
-    const cLevel = combo >= 15 ? 3 : combo >= 10 ? 2 : 1;
-    const cColor = cLevel === 3 ? '#ff4444' : cLevel === 2 ? '#ffaa00' : '#4caf50';
-    const cSize  = cLevel === 3 ? 24 : cLevel === 2 ? 20 : 16;
-    const cLabel = cLevel === 3 ? ' UNSTOPPABLE!' : cLevel === 2 ? ' On Fire!' : ' Combo!';
+  // Combo HUD — elastic scale rendering with color tiers and glow
+  if (gameState === 'playing' && combo >= 2) {
+    const cLevel = combo >= 15 ? 3 : combo >= 10 ? 2 : combo >= 5 ? 1 : 0;
+    const cColor = cLevel === 3 ? '#ff4444' : cLevel === 2 ? '#ffcc00' : cLevel === 1 ? '#4caf50' : '#aaa';
+    const cSize  = cLevel >= 2 ? 22 : 16;
+    const cLabel = cLevel === 3 ? 'x UNSTOPPABLE!' : cLevel === 2 ? 'x On Fire!' : cLevel === 1 ? 'x Combo!' : 'x';
+    const jitterX = cLevel === 3 ? (Math.random()-0.5)*6 : 0;
+    const jitterY = cLevel === 3 ? (Math.random()-0.5)*6 : 0;
+    ctx.save();
+    ctx.translate(W - 16 + jitterX, 72 + jitterY);
+    ctx.scale(comboScale, comboScale);
+    ctx.textAlign = 'right';
+    if (cLevel >= 2) { ctx.shadowColor = cColor; ctx.shadowBlur = 10 + (cLevel===3?8:0); }
     ctx.fillStyle = cColor;
-    ctx.font = 'bold ' + cSize + 'px monospace'; ctx.textAlign = 'right';
-    ctx.fillText(combo + 'x' + cLabel, W - 16, 72);
+    ctx.font = 'bold ' + cSize + 'px monospace';
+    ctx.fillText(combo + cLabel, 0, 0);
+    ctx.shadowBlur = 0;
+    ctx.restore();
   }
+  // Smooth elastic decay of combo scale
+  comboScale += (1.0 - comboScale) * 0.2;
 
   // Combo FX pop — big floating text with scale bounce. Lasts 2 full seconds.
   if (gameState === 'playing' && comboFx) {
