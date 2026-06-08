@@ -355,7 +355,7 @@ function update() {
   const distInHundreds = Math.floor(player.x / 500);
   if (distInHundreds > speedTier) {
     speedTier = distInHundreds;
-    playerSpeed = Math.min(SPEED_CAP, BASE_SPEED + speedTier * 0.10);
+    playerSpeed = Math.min(SPEED_CAP, BASE_SPEED + speedTier * 0.06);
     if (playerSpeed < SPEED_CAP - 0.01) {
       addPopup(player.x, player.y - 40, '加速! ×' + playerSpeed.toFixed(1), '#ffcc00');
     }
@@ -615,7 +615,7 @@ function update() {
           player.y = GROUND_Y - player.h; player.vy = -3; player.onGround = false;
           runStats.wallHits++;
           speedTier = Math.max(0, speedTier - 2);
-          playerSpeed = Math.min(SPEED_CAP, BASE_SPEED + speedTier * 0.10);
+          playerSpeed = Math.min(SPEED_CAP, BASE_SPEED + speedTier * 0.06);
           spawnParticles(player.x + player.w/2, player.y + player.h, '#ff8844', 12);
           addPopup(player.x, player.y - 20, '降速! ×' + playerSpeed.toFixed(1), '#ff8844');
         }
