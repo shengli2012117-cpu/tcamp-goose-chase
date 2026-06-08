@@ -307,7 +307,7 @@ function update() {
   }
 
   // ---- Player movement ----
-  const rageBoost = player.rageTimer > 0 ? 1.35 : 1;
+  const rageBoost = player.rageTimer > 0 ? 1.8 : 1;
   const effectiveSpeed = (player.stumble > 0 ? playerSpeed * 0.3 : playerSpeed) * rageBoost;
   player.w = player.rageTimer > 0 ? Math.floor(player.originalW * 1.4) : player.originalW;
   player.h = player.rageTimer > 0 ? Math.floor(PLAYER_SIZE * 1.4) : (player.sliding ? 16 : PLAYER_SIZE);
@@ -416,19 +416,19 @@ function update() {
   }
   // Escalate bonus at breakpoints (fired only once per threshold)
   if (combo > comboBefore) {
-    const prevBonus = comboBefore >= 20 ? 20 : comboBefore >= 10 ? 10 : comboBefore >= 5 ? 5 : 0;
-    const newBonus  = combo        >= 20 ? 20 : combo        >= 10 ? 10 : combo        >= 5 ? 5 : 0;
+    const prevBonus = comboBefore >= 12 ? 12 : comboBefore >= 10 ? 10 : comboBefore >= 5 ? 5 : 0;
+    const newBonus  = combo        >= 12 ? 12 : combo        >= 10 ? 10 : combo        >= 5 ? 5 : 0;
     const baseScore = combo * 3;
     coinScore += baseScore; score = distanceScore + coinScore;
     addPopup(player.x, player.y - 30, '+' + baseScore, '#ffcc00');
 
     // === Escalation pop effect (fires once when threshold crossed) ===
     if (newBonus > prevBonus) {
-      comboFx = { timer: 160, tier: newBonus === 20 ? 3 : newBonus === 10 ? 2 : 1 };
-      comboShake = newBonus === 20 ? 35 : newBonus === 10 ? 10 : 0;
-      if (newBonus === 20) {
+      comboFx = { timer: 160, tier: newBonus === 12 ? 3 : newBonus === 10 ? 2 : 1 };
+      comboShake = newBonus === 12 ? 35 : newBonus === 10 ? 10 : 0;
+      if (newBonus === 12 && prevBonus < 12) {
         // ==== CRAB RAGE ACTIVATED ====
-        player.rageTimer = 180;
+        player.rageTimer = 300;
         sfxRage();
         spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 30);
         spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ffcc00', 25);
@@ -436,9 +436,8 @@ function update() {
         spawnFlames(player.x + player.w/2, player.y, 20);
         goose.x = Math.max(-500, goose.x - 80);
         spawnParticles(goose.x + goose.w/2, goose.y + goose.h/2, '#ffcc00', 15);
-        // Rage popup — big golden text
         addPopup(player.x, player.y - 60, '🦀 CRAB RAGE! 🔥', '#ffd700');
-      } else if (newBonus === 10) {
+      } else if (newBonus === 10 && prevBonus < 10) {
         // GOLD TIER: 20 particles spiral + corners pulse
         spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ffaa00', 15);
         spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ffcc00', 8);
@@ -484,19 +483,30 @@ function update() {
     }
   }
 
-  // Trail particles
-  if (player.onGround && !player.sliding && player.stumble <= 0) {
-    const trailRate = 0.35 + (playerSpeed - BASE_SPEED) * 0.15;
-    if (Math.random() < trailRate) trailParticles.push({ x: player.x - 4, y: player.y + player.h - 4, life: 12 + Math.random() * 14, size: 1.5 + Math.random() * 3 });
+  // Trail particles — doubled during rage for hyperspace effect
+  const trailRate = player.rageTimer > 0
+    ? 0.8  // rage: heavy trail spray
+    : (player.onGround && !player.sliding && player.stumble <= 0
+      ? 0.35 + (playerSpeed - BASE_SPEED) * 0.15 : 0);
+  if (Math.random() < trailRate) {
+    trailParticles.push({
+      x: player.x - 4, y: player.y + player.h - 4,
+      life: 12 + Math.random() * 14, size: (player.rageTimer > 0 ? 3 : 1.5) + Math.random() * (player.rageTimer > 0 ? 6 : 3),
+      rage: player.rageTimer > 0
+    });
   }
   for (let i = trailParticles.length - 1; i >= 0; i--) {
-    trailParticles[i].life--; trailParticles[i].x -= 0.3 + Math.random() * 0.5;
+    trailParticles[i].life--;
+    const drift = trailParticles[i].rage ? 0.8 + Math.random() * 1.0 : 0.3 + Math.random() * 0.5;
+    trailParticles[i].x -= drift;
     if (trailParticles[i].life <= 0) trailParticles.splice(i, 1);
   }
 
-  // Camera
-  const targetCamX = player.x - W / 3;
-  camera.x += (targetCamX - camera.x) * 0.12;
+  // Camera — pullback during rage for hyper-speed feel
+  const camOffset = player.rageTimer > 0 ? W * 0.22 : W / 3;
+  const camSpeed   = player.rageTimer > 0 ? 0.18 : 0.12;
+  const targetCamX = player.x - camOffset;
+  camera.x += (targetCamX - camera.x) * camSpeed;
   if (camera.x < 0) camera.x = 0;
 
   // Obstacle collision → stumble OR rage-destroy
@@ -935,7 +945,7 @@ function draw() {
   );
 
   // Trail
-  for (const tp of trailParticles) { ctx.globalAlpha = tp.life / 26; ctx.fillStyle = '#90caf9'; ctx.fillRect(tp.x - tp.size/2, tp.y - tp.size/2, tp.size, tp.size); } ctx.globalAlpha = 1;
+  for (const tp of trailParticles) { ctx.globalAlpha = tp.life / 26; ctx.fillStyle = tp.rage ? '#ffd700' : '#90caf9'; ctx.fillRect(tp.x - tp.size/2, tp.y - tp.size/2, tp.size, tp.size); } ctx.globalAlpha = 1;
   // Particles
   for (const p of particles) {
     ctx.globalAlpha = p.life / 60; ctx.fillStyle = p.color;
@@ -958,6 +968,45 @@ function draw() {
   const atCap = playerSpeed >= SPEED_CAP - 0.01;
   ctx.fillText('💰 ' + coinCount + '  |  速度 ' + playerSpeed.toFixed(1) + 'x' + (atCap ? ' 🔒MAX' : ''), 16, 52);
 
+  // Rage HUD bar
+  if (gameState === 'playing' && player.rageTimer > 0) {
+    const rageH = 56;
+    const barH = 10;
+    const ragePct = player.rageTimer / 300;
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(0, rageH, W, barH + 16);
+    // Background
+    ctx.fillStyle = 'rgba(255,170,0,0.15)';
+    ctx.fillRect(0, rageH + 2, W, barH);
+    // Filled bar
+    const barGrad = ctx.createLinearGradient(0, 0, W, 0);
+    barGrad.addColorStop(0, '#ff6600'); barGrad.addColorStop(0.5, '#ffd700'); barGrad.addColorStop(1, '#ff6600');
+    ctx.fillStyle = barGrad;
+    ctx.fillRect(0, rageH + 2, W * ragePct, barH);
+    // Text
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('🦀 CRAB RAGE: ' + (player.rageTimer / 60).toFixed(1) + 's', W / 2, rageH + barH + 11);
+    ctx.textAlign = 'left';
+  }
+
+  // Golden fireworks in corners during rage
+  if (gameState === 'playing' && player.rageTimer > 0) {
+    const fwRate = 0.6; // 60% chance per frame per corner
+    for (let c = 0; c < 4; c++) {
+      if (Math.random() < fwRate) {
+        const fx = camera.x + (c === 0 || c === 2 ? 20 : W - 20);
+        const fy = (c === 0 || c === 1 ? 20 : H - 20);
+        for (let k = 0; k < 3; k++) {
+          const ang = Math.random() * Math.PI * 2;
+          const spd = 2 + Math.random() * 4;
+          particles.push({ x: fx, y: fy, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, life: 25 + Math.random() * 20, color: '#ffd700', size: 2 + Math.random() * 4, type: 'dot' });
+        }
+      }
+    }
+  }
+
   // Goose distance (prominent)
   const gap = Math.floor(player.x - goose.x);
   ctx.font = 'bold 16px monospace'; ctx.textAlign = 'right';
@@ -969,7 +1018,7 @@ function draw() {
 
   // Combo HUD
   if (gameState === 'playing' && combo >= 5) {
-    const cLevel = combo >= 20 ? 3 : combo >= 10 ? 2 : 1;
+    const cLevel = combo >= 12 ? 3 : combo >= 10 ? 2 : 1;
     const cColor = cLevel === 3 ? '#ff4444' : cLevel === 2 ? '#ffaa00' : '#4caf50';
     const cSize  = cLevel === 3 ? 24 : cLevel === 2 ? 20 : 16;
     const cLabel = cLevel === 3 ? ' UNSTOPPABLE!' : cLevel === 2 ? ' On Fire!' : ' Combo!';
