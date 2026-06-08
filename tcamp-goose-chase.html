@@ -574,7 +574,7 @@ function draw() {
     ctx.fillStyle = '#b8860b'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center'; ctx.fillText('$', cx, cy + 3);
   }
 
-  // Goose
+  // Goose — on-screen
   const gooseScreenX = goose.x - camera.x;
   if (gooseScreenX > -60 && gooseScreenX < W + 40) {
     const gx = goose.x, gy = GROUND_Y - GOOSE_SIZE, gw = GOOSE_SIZE, gh = GOOSE_SIZE;
@@ -597,6 +597,34 @@ function draw() {
       ctx.strokeStyle = '#ff444488'; ctx.lineWidth = 1;
       for (let l = 0; l < 3; l++) { const lx = gx - 8 - l * 6; ctx.beginPath(); ctx.moveTo(lx, gy); ctx.lineTo(lx - 10, gy); ctx.stroke(); ctx.beginPath(); ctx.moveTo(lx, gy + gh); ctx.lineTo(lx - 10, gy + gh); ctx.stroke(); }
     }
+  }
+
+  // Off-screen goose indicator (left edge) — drawn in world space
+  if (gooseScreenX < -20 && gooseScreenX > -800) {
+    const gapOff = Math.floor(player.x - goose.x);
+    const offAlpha = Math.min(1, Math.abs(gooseScreenX + 60) / 200);
+    // Pill drawn at fixed screen position: x=2 screen, so worldX = camera.x + 2
+    const px = camera.x + 2, py = GROUND_Y - 58, pw = 90, ph = 48;
+    ctx.fillStyle = 'rgba(40,0,0,' + (0.5 + offAlpha * 0.5) + ')';
+    ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 8); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,68,68,' + (0.6 + offAlpha * 0.4) + ')';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 8); ctx.stroke();
+    // Tiny goose icon
+    ctx.fillStyle = '#e53935';
+    ctx.fillRect(px + 10, py + 10, 18, 18);
+    ctx.fillStyle = '#fff'; ctx.fillRect(px + 14, py + 13, 5, 5); ctx.fillRect(px + 20, py + 13, 5, 5);
+    ctx.fillStyle = '#000'; ctx.fillRect(px + 16, py + 15, 2, 2); ctx.fillRect(px + 22, py + 15, 2, 2);
+    ctx.fillStyle = '#ff9800';
+    ctx.beginPath(); ctx.moveTo(px + 28, py + 16); ctx.lineTo(px + 33, py + 19); ctx.lineTo(px + 28, py + 22); ctx.fill();
+    // Distance text
+    ctx.fillStyle = '#ff4444';
+    ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center';
+    const distLabel = gapOff >= 1000 ? (gapOff/1000).toFixed(1) + 'km' : gapOff + 'm';
+    ctx.fillText(distLabel, px + pw/2 + 25, py + 19);
+    ctx.fillStyle = '#ff666688';
+    ctx.font = '9px monospace';
+    ctx.fillText('←', px + pw/2 + 25, py + 34);
   }
 
   // Player
