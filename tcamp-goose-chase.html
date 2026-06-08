@@ -30,22 +30,95 @@ let gooseImgLoaded = false;
 GOOSE_IMG.onload = function() { gooseImgLoaded = true; };
 GOOSE_IMG.onerror = function() { gooseImgLoaded = false; };
 
-// --- Audio ---
-const AUDIO_URLS = {
-  bgm: 'https://static.tcamp.qq.com/gallery/prod/2026/6/8/f3574b6b86122000/c0518442-3b16-49ce-abed-a999c7b6ef9e.mp3',
-  jump: 'https://actions.google.com/sounds/v1/cartoon/cartoon_boing.ogg',
-  coin: 'https://actions.google.com/sounds/v1/cartoon/slide_whistle_to_drum.ogg'
-};
-let bgm = null;
-try { bgm = new Audio(AUDIO_URLS.bgm); bgm.loop = true; bgm.volume = 0.45; } catch(e) { bgm = null; }
-
-function playSFX(url) {
-  try {
-    const s = new Audio(url);
-    s.volume = 0.5;
-    s.play().catch(function() {});
-  } catch(e) {}
+// --- Web Audio API Sound System ---
+let audioCtx = null;
+function getAudioCtx() {
+  if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {} }
+  if (audioCtx && audioCtx.state === 'suspended') { audioCtx.resume().catch(function(){}); }
+  return audioCtx;
 }
+
+// --- BGM ---
+const BGM_URL = 'https://static.tcamp.qq.com/gallery/prod/2026/6/8/f3574b6b86122000/c0518442-3b16-49ce-abed-a999c7b6ef9e.mp3';
+let bgm = null;
+try { bgm = new Audio(BGM_URL); bgm.loop = true; bgm.volume = 0.45; } catch(e) { bgm = null; }
+
+let coinStreak = 0;
+let coinSfxTimer = 0;
+
+// ============= SYNTH SFX =============
+
+// Deep rumble jump sound (low-freq oscillator + low-pass filter)
+function sfxJump() {
+  const ctx = getAudioCtx(); if (!ctx) return;
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  const filter = ctx.createBiquadFilter();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(80, now);
+  osc.frequency.exponentialRampToValueAtTime(40, now + 0.15);
+  filter.type = 'lowpass';
+  filter.frequency.setValueAtTime(200, now);
+  filter.frequency.exponentialRampToValueAtTime(60, now + 0.15);
+  gain.gain.setValueAtTime(0.15, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+  osc.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+  osc.start(now); osc.stop(now + 0.2);
+}
+
+// Ascending coin chord (triangle wave, pitch climbs with streak)
+function sfxCoin() {
+  const ctx = getAudioCtx(); if (!ctx) return;
+  const now = ctx.currentTime;
+  const note = 440 + (coinStreak % 7) * 55; // C5 → C6 scale over 7 notes
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(note, now);
+  gain.gain.setValueAtTime(0.1, now);
+  gain.gain.setValueAtTime(0.08, now + 0.05);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+  osc.connect(gain); gain.connect(ctx.destination);
+  osc.start(now); osc.stop(now + 0.18);
+}
+
+// Explosive rage SFX — layered noise burst + low rumble
+function sfxRage() {
+  const ctx = getAudioCtx(); if (!ctx) return;
+  const now = ctx.currentTime;
+
+  // Layer 1: white noise crash
+  const bufferSize = ctx.sampleRate * 0.4;
+  const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) { data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 1.5); }
+  const noise = ctx.createBufferSource(); noise.buffer = buffer;
+  const noiseGain = ctx.createGain();
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'bandpass';
+  noiseFilter.frequency.setValueAtTime(800, now);
+  noiseFilter.frequency.exponentialRampToValueAtTime(200, now + 0.35);
+  noiseGain.gain.setValueAtTime(0.18, now);
+  noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+  noise.connect(noiseFilter); noiseFilter.connect(noiseGain); noiseGain.connect(ctx.destination);
+  noise.start(now); noise.stop(now + 0.4);
+
+  // Layer 2: low sub-boom
+  const sub = ctx.createOscillator();
+  const subGain = ctx.createGain();
+  sub.type = 'sine';
+  sub.frequency.setValueAtTime(55, now);
+  sub.frequency.exponentialRampToValueAtTime(25, now + 0.4);
+  subGain.gain.setValueAtTime(0.25, now);
+  subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+  sub.connect(subGain); subGain.connect(ctx.destination);
+  sub.start(now); sub.stop(now + 0.5);
+}
+
+// --- Coin streak reset fallback ---
+let coinStreakReset = 0;
+
 
 // --- Game state ---
 let player, goose, camera, gameState, countdownTimer;
@@ -169,6 +242,7 @@ function reset() {
   lbNameInput = '';
 
   runStats = { jumps: 0, maxCombo: 0, wallHits: 0, pitsFallen: 0, coinsCollected: 0, dist: 0 };
+  coinStreak = 0; coinSfxTimer = 0; coinStreakReset = 0;
 
   // Pre-generate first 2 waves
   for (let w = 0; w < 2; w++) {
@@ -304,7 +378,7 @@ function update() {
     player.vy = power; player.onGround = false; player.coyoteTimer = 0;
     player.doubleJumped = (player.jumpsUsed === 1);
     player.jumpHeld = true; player.jumpsUsed++; jumpRequested--;
-    // playSFX(AUDIO_URLS.jump);  // disabled — too frequent
+    sfxJump();
     if (player.jumpsUsed === 2) {
       spawnParticles(player.x + player.w/2, player.y + player.h, '#fff', 12);
       addPopup(player.x, player.y - 20, '二段跳!', '#90caf9');
@@ -348,7 +422,13 @@ function update() {
     if (collides(player, cBox)) {
       coin.collected = true; coinScore += 10; coinCount++;
       runStats.coinsCollected++;
-      // playSFX(AUDIO_URLS.coin); // disabled — fires too frequently
+      // Coin chord SFX with streak counter
+      if (coinSfxTimer <= 0) {
+        sfxCoin();
+        coinSfxTimer = 6;
+      }
+      coinStreak++;
+      coinStreakReset = 0;
       addPopup(coin.x, coin.y - 10, '+10', '#ffcc00');
       spawnParticles(coin.x, coin.y, '#ffd700', 6);
     }
@@ -377,7 +457,8 @@ function update() {
       comboFx = { timer: 160, tier: newBonus === 20 ? 3 : newBonus === 10 ? 2 : 1 };
       comboShake = newBonus === 20 ? 25 : newBonus === 10 ? 10 : 0;
       if (newBonus === 20) {
-        // RED TIER: 50 particles + 12 flames + screen flash + goose recoil
+        // RED TIER: explosive particles + rage SFX
+        sfxRage();
         spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 30);
         spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ffcc00', 12);
         spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ffffff', 8);
@@ -413,6 +494,11 @@ function update() {
     if (comboFx.timer <= 0) comboFx = null;
   }
   if (comboShake > 0) comboShake = Math.max(0, comboShake - 0.8);
+
+  // Coin streak decay & SFX cooldown
+  if (coinSfxTimer > 0) coinSfxTimer--;
+  coinStreakReset++;
+  if (coinStreakReset > 60) { coinStreak = 0; coinStreakReset = 60; }
 
   // Milestones every 100m
   const milestone = Math.floor(player.x / 1000) * 100;
