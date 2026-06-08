@@ -169,7 +169,8 @@ function reset() {
     doubleJumped: false,
     sliding: false, slideTimer: 0, holdingSlide: false,
     jumpHeld: false, jumpsUsed: 0,
-    stumble: 0, pitFalling: 0
+    stumble: 0, pitFalling: 0,
+    rageTimer: 0, originalW: PLAYER_SIZE
   };
   goose = { x: -160, y: GROUND_Y - GOOSE_SIZE, w: GOOSE_SIZE, h: GOOSE_SIZE };
   player._lastMilestone = 0;
@@ -299,8 +300,17 @@ function update() {
   obstacles = obstacles.filter(o => o.x + o.w > cleanX);
   coins = coins.filter(c => c.collected || c.x > cleanX - 100);
 
+  // ---- Rage timer ----
+  if (player.rageTimer > 0) {
+    player.rageTimer--;
+    if (player.rageTimer <= 0) { player.w = player.originalW; player.h = PLAYER_SIZE; }
+  }
+
   // ---- Player movement ----
-  const effectiveSpeed = player.stumble > 0 ? playerSpeed * 0.3 : playerSpeed;
+  const rageBoost = player.rageTimer > 0 ? 1.35 : 1;
+  const effectiveSpeed = (player.stumble > 0 ? playerSpeed * 0.3 : playerSpeed) * rageBoost;
+  player.w = player.rageTimer > 0 ? Math.floor(player.originalW * 1.4) : player.originalW;
+  player.h = player.rageTimer > 0 ? Math.floor(PLAYER_SIZE * 1.4) : (player.sliding ? 16 : PLAYER_SIZE);
   player.x += effectiveSpeed;
   player.runFrame++;
   distanceScore = Math.floor(player.x / 10);
@@ -315,16 +325,20 @@ function update() {
     return;
   }
 
-  // Slide
-  const sDown = (keys['s'] || keys['S']);
-  if (sDown && player.onGround && !player.sliding) { player.sliding = true; player.slideTimer = 36; }
-  player.holdingSlide = sDown;
-  if (player.sliding) {
-    player.slideTimer--;
-    player.h = 16; player.y = GROUND_Y - player.h;
-    if (player.holdingSlide && player.slideTimer < 6) player.slideTimer = 6;
-    if (player.slideTimer <= 0) { player.sliding = false; player.h = PLAYER_SIZE; player.y = GROUND_Y - player.h; }
-  } else if (player.onGround) { player.h = PLAYER_SIZE; }
+  // Slide — disabled during rage
+  if (player.rageTimer <= 0) {
+    const sDown = (keys['s'] || keys['S']);
+    if (sDown && player.onGround && !player.sliding) { player.sliding = true; player.slideTimer = 36; }
+    player.holdingSlide = sDown;
+    if (player.sliding) {
+      player.slideTimer--;
+      player.h = 16; player.y = GROUND_Y - player.h;
+      if (player.holdingSlide && player.slideTimer < 6) player.slideTimer = 6;
+      if (player.slideTimer <= 0) { player.sliding = false; player.h = PLAYER_SIZE; player.y = GROUND_Y - player.h; }
+    } else if (player.onGround) { player.h = PLAYER_SIZE; }
+  } else {
+    player.sliding = false;
+  }
 
   // Jump system (buffer-based)
   while (jumpRequested > 0 && player.jumpsUsed < 2) {
@@ -359,13 +373,15 @@ function update() {
   if (player.coyoteTimer > 0 && player.jumpsUsed > 0) player.coyoteTimer--;
   if (player.coyoteTimer > 0 && player.jumpsUsed === 0) player.coyoteTimer--;
 
-  // Pit detection
-  for (const obs of obstacles) {
-    if (obs.type !== 'pit') continue;
-    const pHoriz = player.x + player.w > obs.x && player.x < obs.x + obs.w;
-    if (pHoriz && player.y >= GROUND_Y - player.h && player.vy >= 0 && player.pitFalling === 0) {
-      player.pitFalling = 45; player.vy = 0;
-      runStats.pitsFallen++;
+  // Pit detection — nullified during rage
+  if (player.rageTimer <= 0) {
+    for (const obs of obstacles) {
+      if (obs.type !== 'pit') continue;
+      const pHoriz = player.x + player.w > obs.x && player.x < obs.x + obs.w;
+      if (pHoriz && player.y >= GROUND_Y - player.h && player.vy >= 0 && player.pitFalling === 0) {
+        player.pitFalling = 45; player.vy = 0;
+        runStats.pitsFallen++;
+      }
     }
   }
 
@@ -409,16 +425,19 @@ function update() {
     // === Escalation pop effect (fires once when threshold crossed) ===
     if (newBonus > prevBonus) {
       comboFx = { timer: 160, tier: newBonus === 20 ? 3 : newBonus === 10 ? 2 : 1 };
-      comboShake = newBonus === 20 ? 25 : newBonus === 10 ? 10 : 0;
+      comboShake = newBonus === 20 ? 35 : newBonus === 10 ? 10 : 0;
       if (newBonus === 20) {
-        // RED TIER: explosive particles + rage SFX
+        // ==== CRAB RAGE ACTIVATED ====
+        player.rageTimer = 180;
         sfxRage();
         spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 30);
-        spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ffcc00', 12);
-        spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ffffff', 8);
-        spawnFlames(player.x + player.w/2, player.y, 12);
-        goose.x = Math.max(-500, goose.x - 40);
-        spawnParticles(goose.x + goose.w/2, goose.y + goose.h/2, '#ffcc00', 8);
+        spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ffcc00', 25);
+        spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ffffff', 15);
+        spawnFlames(player.x + player.w/2, player.y, 20);
+        goose.x = Math.max(-500, goose.x - 80);
+        spawnParticles(goose.x + goose.w/2, goose.y + goose.h/2, '#ffcc00', 15);
+        // Rage popup — big golden text
+        addPopup(player.x, player.y - 60, '🦀 CRAB RAGE! 🔥', '#ffd700');
       } else if (newBonus === 10) {
         // GOLD TIER: 20 particles spiral + corners pulse
         spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ffaa00', 15);
@@ -480,7 +499,7 @@ function update() {
   camera.x += (targetCamX - camera.x) * 0.12;
   if (camera.x < 0) camera.x = 0;
 
-  // Obstacle collision → stumble
+  // Obstacle collision → stumble OR rage-destroy
   if (player.stumble <= 0) {
     for (const obs of obstacles) {
       if (obs.type === 'pit') continue;
@@ -490,14 +509,22 @@ function update() {
       if (obs.type === 'beam' || obs.type === 'widebeam') { if (player.sliding) continue; oBox = { x: obs.x + 2, y: obs.y + 1, w: obs.w - 4, h: obs.h - 1 }; }
       else { oBox = { x: obs.x + 3, y: obs.y + 2, w: obs.w - 6, h: obs.h - 2 }; }
       if (collides(pBox, oBox)) {
-        player.stumble = 18; player.x = Math.max(100, player.x - 20);
-        player.y = GROUND_Y - player.h; player.vy = -3; player.onGround = false;
-        runStats.wallHits++;
-        // DDA: one mistake drops speed by 2 tiers — gives breathing room
-        speedTier = Math.max(0, speedTier - 2);
-        playerSpeed = Math.min(SPEED_CAP, BASE_SPEED + speedTier * 0.10);
-        spawnParticles(player.x + player.w/2, player.y + player.h, '#ff8844', 12);
-        addPopup(player.x, player.y - 20, '降速! ×' + playerSpeed.toFixed(1), '#ff8844');
+        if (player.rageTimer > 0) {
+          // RAGE: smash through obstacle
+          obstacles = obstacles.filter(o => o !== obs);
+          spawnParticles(obs.x + obs.w/2, obs.y + obs.h/2, '#ffd700', 20);
+          for (let g = 0; g < 8; g++) {
+            coins.push({ x: obs.x + g * 10 - 30, y: obs.y - 20 - Math.random() * 30, collected: false });
+          }
+        } else {
+          player.stumble = 18; player.x = Math.max(100, player.x - 20);
+          player.y = GROUND_Y - player.h; player.vy = -3; player.onGround = false;
+          runStats.wallHits++;
+          speedTier = Math.max(0, speedTier - 2);
+          playerSpeed = Math.min(SPEED_CAP, BASE_SPEED + speedTier * 0.10);
+          spawnParticles(player.x + player.w/2, player.y + player.h, '#ff8844', 12);
+          addPopup(player.x, player.y - 20, '降速! ×' + playerSpeed.toFixed(1), '#ff8844');
+        }
         break;
       }
     }
@@ -548,7 +575,7 @@ function submitLeaderboard() {
 }
 
 // ===================== CRAB DRAWING =====================
-function drawCrab(cx, cy, cw, ch, onGround, sliding, stumble, runFrame, pitFalling, jumpsUsed, hasComboFx) {
+function drawCrab(cx, cy, cw, ch, onGround, sliding, stumble, runFrame, pitFalling, jumpsUsed, hasComboFx, inRage, rageTimer) {
   const pitFade = pitFalling > 0 ? (pitFalling / 45) : 1;
   ctx.globalAlpha = pitFade;
 
@@ -595,29 +622,34 @@ function drawCrab(cx, cy, cw, ch, onGround, sliding, stumble, runFrame, pitFalli
   }
 
   // --- Shell body ---
-  const shellColor = (stumbleFlash && !sliding) ? '#ffaa66' : (hasComboFx ? '#ff5533' : '#dd3333');
-  const shellStroke = (stumbleFlash && !sliding) ? '#ffcc88' : '#cc2222';
+  const rageFlash = inRage && Math.floor(Date.now() / 50) % 2 === 0;
+  const shellColor = inRage ? (rageFlash ? '#ffd700' : '#ffaa00') :
+    (stumbleFlash && !sliding) ? '#ffaa66' : (hasComboFx ? '#ff5533' : '#dd3333');
+  const shellStroke = inRage ? '#ff6600' :
+    (stumbleFlash && !sliding) ? '#ffcc88' : '#cc2222';
   ctx.fillStyle = shellColor;
-  ctx.strokeStyle = shellStroke; ctx.lineWidth = 2;
+  ctx.strokeStyle = shellStroke; ctx.lineWidth = inRage ? 4 : 2;
   ctx.beginPath();
   ctx.ellipse(effCX, effCY, shellRX, shellRY, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
 
   // --- Shell highlight ---
-  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  ctx.fillStyle = inRage ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)';
   ctx.beginPath();
   ctx.ellipse(effCX - shellRX * 0.2, effCY - shellRY * 0.25, shellRX * 0.45, shellRY * 0.35, -0.3, 0, Math.PI * 2);
   ctx.fill();
 
   // --- Claws (big & prominent) ---
-  const clawSize = sliding ? 10 : 16;
   const clawBaseY = effCY;
-  const comboWave = hasComboFx ? Math.abs(Math.sin(Date.now() * 0.015)) : 1;
-  const clawColor = hasComboFx
-    ? (Math.sin(Date.now() * 0.02) > 0 ? '#ffcc00' : '#ffdd44')
-    : '#ee4400';
-  const clawAngle = hasComboFx ? Math.sin(Date.now() * 0.025) * 1.2 : Math.sin(runFrame * 0.2) * 0.4;
+  const clawSize = inRage ? 24 : sliding ? 10 : 16;
+  const comboWave = inRage ? Math.abs(Math.sin(Date.now() * 0.03)) : (hasComboFx ? Math.abs(Math.sin(Date.now() * 0.015)) : 1);
+  const clawColor = inRage
+    ? (Math.sin(Date.now() * 0.04) > 0 ? '#ffd700' : '#ffcc00')
+    : hasComboFx
+      ? (Math.sin(Date.now() * 0.02) > 0 ? '#ffcc00' : '#ffdd44')
+      : '#ee4400';
+  const clawAngle = inRage ? Math.sin(Date.now() * 0.06) * 1.8 : hasComboFx ? Math.sin(Date.now() * 0.025) * 1.2 : Math.sin(runFrame * 0.2) * 0.4;
 
   for (let cSide = 0; cSide < 2; cSide++) {
     const cxDir = cSide === 0 ? -1 : 1;
@@ -899,7 +931,7 @@ function draw() {
   drawCrab(
     player.x, player.y, player.w, player.h,
     player.onGround, player.sliding, player.stumble, player.runFrame,
-    player.pitFalling, player.jumpsUsed, !!comboFx
+    player.pitFalling, player.jumpsUsed, !!comboFx, player.rageTimer > 0, player.rageTimer
   );
 
   // Trail
