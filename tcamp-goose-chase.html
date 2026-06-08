@@ -304,7 +304,7 @@ function update() {
     player.vy = power; player.onGround = false; player.coyoteTimer = 0;
     player.doubleJumped = (player.jumpsUsed === 1);
     player.jumpHeld = true; player.jumpsUsed++; jumpRequested--;
-    playSFX(AUDIO_URLS.jump);
+    // playSFX(AUDIO_URLS.jump);  // disabled — too frequent
     if (player.jumpsUsed === 2) {
       spawnParticles(player.x + player.w/2, player.y + player.h, '#fff', 12);
       addPopup(player.x, player.y - 20, '二段跳!', '#90caf9');
@@ -348,7 +348,7 @@ function update() {
     if (collides(player, cBox)) {
       coin.collected = true; coinScore += 10; coinCount++;
       runStats.coinsCollected++;
-      playSFX(AUDIO_URLS.coin);
+      // playSFX(AUDIO_URLS.coin); // disabled — fires too frequently
       addPopup(coin.x, coin.y - 10, '+10', '#ffcc00');
       spawnParticles(coin.x, coin.y, '#ffd700', 6);
     }
