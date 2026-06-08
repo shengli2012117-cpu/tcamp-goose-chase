@@ -351,11 +351,11 @@ function update() {
   if (gameState === 'countdown') { countdownTimer--; if (countdownTimer <= 0) { gameState = 'playing'; try { if (bgm) bgm.play().catch(function(){}); } catch(e) {} } return; }
   if (gameState !== 'playing') return;
 
-  // ---- Speed ramp: +0.12 every 500m, no cap ----
-  const distInHundreds = Math.floor(player.x / 500);
-  if (distInHundreds > speedTier) {
-    speedTier = distInHundreds;
-    playerSpeed = Math.min(SPEED_CAP, BASE_SPEED + speedTier * 0.04);
+  // ---- Speed ramp: +0.02 every 1000px, caps at 4.0x after ~8000m HUD distance ----
+  const distDiv = Math.floor(player.x / 1000);
+  if (distDiv > speedTier) {
+    speedTier = distDiv;
+    playerSpeed = Math.min(SPEED_CAP, BASE_SPEED + speedTier * 0.03);
     if (playerSpeed < SPEED_CAP - 0.01) {
       addPopup(player.x, player.y - 40, '加速! ×' + playerSpeed.toFixed(1), '#ffcc00');
     }
@@ -615,7 +615,7 @@ function update() {
           player.y = GROUND_Y - player.h; player.vy = -3; player.onGround = false;
           runStats.wallHits++;
           speedTier = Math.max(0, speedTier - 2);
-          playerSpeed = Math.min(SPEED_CAP, BASE_SPEED + speedTier * 0.04);
+          playerSpeed = Math.min(SPEED_CAP, BASE_SPEED + speedTier * 0.03);
           spawnParticles(player.x + player.w/2, player.y + player.h, '#ff8844', 12);
           addPopup(player.x, player.y - 20, '降速! ×' + playerSpeed.toFixed(1), '#ff8844');
         }
