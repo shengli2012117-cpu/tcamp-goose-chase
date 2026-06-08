@@ -6,7 +6,10 @@
 <title>Tcamp 鹅追击</title>
 <style>
   body { margin: 0; background: #1a1a2e; display: flex; justify-content: center; align-items: center; height: 100vh; width: 100vw; overflow: hidden; touch-action: none; }
-  canvas { border: 2px solid #444; cursor: pointer; user-select: none; -webkit-user-select: none; touch-action: none; max-width: 100vw; max-height: 100vh; width: auto; height: auto; aspect-ratio: 800 / 600; }
+  canvas { border: 2px solid #444; cursor: pointer; user-select: none; -webkit-user-select: none; touch-action: none; max-width: 100vw; max-height: 100vh; width: auto; height: auto; aspect-ratio: 800 / 600; transform: translate3d(0,0,0); -webkit-transform: translate3d(0,0,0); }
+  @media (orientation: portrait) {
+    canvas { width: 100vh !important; height: 100vw !important; transform: rotate(90deg) translate3d(0,0,0); -webkit-transform: rotate(90deg) translate3d(0,0,0); }
+  }
 </style>
 </head>
 <body>
@@ -200,7 +203,7 @@ function reset() {
 
   runStats = { jumps: 0, maxCombo: 0, wallHits: 0, pitsFallen: 0, coinsCollected: 0, dist: 0 };
   coinStreak = 0; coinSfxTimer = 0; coinStreakReset = 0;
-  touchSlideActive = false; touchStartY = 0;
+  touchSlideActive = false; touchStartX = 0; touchStartY = 0; justTouched = false;
   try { lbMobile.blur(); lbMobile.value = ''; } catch(e) {}
 
   // Pre-generate first 2 waves
@@ -284,46 +287,70 @@ window.addEventListener('keyup', e => {
   e.preventDefault();
 });
 canvas.addEventListener('click', () => {
-  if (gameState === 'waiting') { gameState = 'countdown'; countdownTimer = 90; }
+  if (justTouched) { justTouched = false; return; }
+  if (gameState === 'waiting') {
+    gameState = 'countdown'; countdownTimer = 90;
+    try { canvas.requestFullscreen().catch(function(){}); } catch(e) {}
+  }
   if (gameState === 'playing') jumpRequested = Math.min(jumpRequested + 1, 2);
 });
 
-// ===================== TOUCH GESTURES =====================
-let touchStartY = 0;
+// ===================== TOUCH GESTURES (vector-based) =====================
+let touchStartX = 0, touchStartY = 0;
 let touchSlideActive = false;
+let justTouched = false;
+
+// Correct touch coords when canvas is CSS-rotated in portrait mode
+function touchCoords(e) {
+  var rawX = e.touches[0].clientX;
+  var rawY = e.touches[0].clientY;
+  var rect = canvas.getBoundingClientRect();
+  var isPortrait = window.matchMedia('(orientation: portrait)').matches;
+  if (isPortrait) {
+    // Canvas is rotated 90deg, so remap: screen-Y → canvas-X, screen-X → canvas-Y inverted
+    var cx = rect.left + rect.width / 2;
+    var cy = rect.top + rect.height / 2;
+    var dx = rawX - cx, dy = rawY - cy;
+    return { x: dy, y: -dx };
+  }
+  return { x: rawX - rect.left, y: rawY - rect.top };
+}
 
 canvas.addEventListener('touchstart', function(e) {
   e.preventDefault();
-  if (gameState === 'waiting') { gameState = 'countdown'; countdownTimer = 90; return; }
+  if (gameState === 'waiting') {
+    gameState = 'countdown'; countdownTimer = 90;
+    try { canvas.requestFullscreen().catch(function(){}); } catch(e) {}
+    return;
+  }
   if (gameState !== 'playing') return;
-  const t = e.touches[0];
-  touchStartY = t.clientY;
+  var c = touchCoords(e);
+  touchStartX = c.x; touchStartY = c.y;
   touchSlideActive = false;
-  jumpRequested = Math.min(jumpRequested + 1, 2);
+  justTouched = true;
 }, { passive: false });
 
 canvas.addEventListener('touchmove', function(e) {
   e.preventDefault();
   if (gameState !== 'playing') return;
-  const t = e.touches[0];
-  const dy = t.clientY - touchStartY;
-  if (dy > 30 && !touchSlideActive) {
-    // Swipe down → start slide
+  var c = touchCoords(e);
+  var dy = c.y - touchStartY;
+  if (dy > 40 && !touchSlideActive) {
     touchSlideActive = true;
     keys['s'] = true;
-  } else if (dy < -20 && touchSlideActive) {
-    // Swipe up → cancel slide
-    touchSlideActive = false;
-    keys['s'] = false;
   }
 }, { passive: false });
 
 canvas.addEventListener('touchend', function(e) {
   e.preventDefault();
+  if (gameState !== 'playing') return;
   if (touchSlideActive) {
     touchSlideActive = false;
     keys['s'] = false;
     if (player) player.holdingSlide = false;
+  } else {
+    // Short tap → jump
+    jumpRequested = Math.min(jumpRequested + 1, 2);
   }
 }, { passive: false });
 
