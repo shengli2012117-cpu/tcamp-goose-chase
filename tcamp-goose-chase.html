@@ -345,8 +345,8 @@ function collides(a, b) { return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y
 
 // ===================== UPDATE =====================
 function update() {
-  for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.x += p.vx * fpsScale; p.y += p.vy * fpsScale; p.vy += 0.15 * fpsScale; p.life--; if (p.life <= 0) particles.splice(i, 1); }
-  for (let i = popups.length - 1; i >= 0; i--) { const p = popups[i]; p.y += p.vy * fpsScale; p.life--; if (p.life <= 0) popups.splice(i, 1); }
+  for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life--; if (p.life <= 0) particles.splice(i, 1); }
+  for (let i = popups.length - 1; i >= 0; i--) { const p = popups[i]; p.y += p.vy; p.life--; if (p.life <= 0) popups.splice(i, 1); }
 
   if (gameState === 'countdown') { countdownTimer--; if (countdownTimer <= 0) { gameState = 'playing'; try { if (bgm) bgm.play().catch(function(){}); } catch(e) {} } return; }
   if (gameState !== 'playing') return;
@@ -387,7 +387,7 @@ function update() {
   const effectiveSpeed = (player.stumble > 0 ? playerSpeed * 0.3 : playerSpeed) * rageBoost;
   player.w = player.rageTimer > 0 ? Math.floor(player.originalW * 1.4) : player.originalW;
   player.h = player.rageTimer > 0 ? Math.floor(PLAYER_SIZE * 1.4) : (player.sliding ? 16 : PLAYER_SIZE);
-  player.x += effectiveSpeed * fpsScale;
+  player.x += effectiveSpeed;
   player.runFrame++;
   distanceScore = Math.floor(player.x / 10);
   score = distanceScore + coinScore;
@@ -395,7 +395,7 @@ function update() {
   // Pit falling
   if (player.pitFalling > 0) {
     player.pitFalling--;
-    player.vy += 0.3 * fpsScale; player.y += player.vy * fpsScale;
+    player.vy += 0.3; player.y += player.vy;
     spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 1);
     if (player.pitFalling <= 0) { saveHighScore(); gameState = 'over'; }
     return;
@@ -431,7 +431,7 @@ function update() {
   }
 
   if (!player.jumpHeld && player.vy < -3) player.vy = -3;
-  player.vy += 0.45 * fpsScale; player.y += player.vy * fpsScale;
+  player.vy += 0.45; player.y += player.vy;
 
   // Ground collision
   if (player.y >= GROUND_Y - player.h) {
@@ -542,7 +542,7 @@ function update() {
     comboFx.timer--;
     if (comboFx.timer <= 0) comboFx = null;
   }
-  if (comboShake > 0) comboShake = Math.max(0, comboShake - 0.8 * fpsScale);
+  if (comboShake > 0) comboShake = Math.max(0, comboShake - 0.8);
 
   // Coin streak decay & SFX cooldown
   if (coinSfxTimer > 0) coinSfxTimer--;
@@ -575,7 +575,7 @@ function update() {
   for (let i = trailParticles.length - 1; i >= 0; i--) {
     trailParticles[i].life--;
     const drift = trailParticles[i].rage ? 0.8 + Math.random() * 1.0 : 0.3 + Math.random() * 0.5;
-    trailParticles[i].x -= drift * fpsScale;
+    trailParticles[i].x -= drift;
     if (trailParticles[i].life <= 0) trailParticles.splice(i, 1);
   }
 
@@ -583,7 +583,7 @@ function update() {
   const camOffset = player.rageTimer > 0 ? W * 0.22 : W / 3;
   const camSpeed   = player.rageTimer > 0 ? 0.18 : 0.12;
   const targetCamX = player.x - camOffset;
-  camera.x += (targetCamX - camera.x) * camSpeed * Math.min(fpsScale, 3);
+  camera.x += (targetCamX - camera.x) * camSpeed;
   if (camera.x < 0) camera.x = 0;
 
   // Obstacle collision → stumble OR rage-destroy
@@ -630,14 +630,14 @@ function update() {
   // Goose: 82% at start → 96% at speed cap. Slight gap always remains.
   const chaseRatio = 0.82 + Math.min(playerSpeed / SPEED_CAP, 1) * 0.14;
   const gooseSpeed = player.stumble > 0 ? playerSpeed : effectiveSpeed * chaseRatio;
-  goose.x += gooseSpeed * fpsScale;
+  goose.x += gooseSpeed;
 
-  screenShake = gooseDist < 100 ? Math.min(10, 100 - gooseDist) : Math.max(0, screenShake - 0.5 * fpsScale);
+  screenShake = gooseDist < 100 ? Math.min(10, 100 - gooseDist) : Math.max(0, screenShake - 0.5);
 
   // BGM dynamic rate: speeds up when goose is close (<120m), recovers slowly
   if (bgm && gameState === 'playing') {
     const targetRate = gooseDist < 120 ? 1.25 : 1.0;
-    bgm.playbackRate += (targetRate - bgm.playbackRate) * 0.08 * Math.min(fpsScale, 4);
+    bgm.playbackRate += (targetRate - bgm.playbackRate) * 0.08;
   }
 
   if (gooseDist < 8) { spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 50); saveHighScore(); gameState = 'over'; return; }
@@ -1394,25 +1394,7 @@ function drawGameOver() {
   ctx.fillText('按 R 重新挑战', W / 2, H / 2 + 148);
 }
 
-// ===================== DYNAMIC FPS-SCALED GAME LOOP =====================
-let lastTime = performance.now();
-let fpsScale = 1.0;
-
-function gameLoop() {
-  const currentTime = performance.now();
-  let deltaTime = currentTime - lastTime;
-  lastTime = currentTime;
-
-  // Prevent death-spiral from tab-switch
-  if (deltaTime > 250) deltaTime = 250;
-
-  // 1.0 = 60fps (16.67ms), 2.0 = 30fps (33.3ms), etc.
-  fpsScale = deltaTime / (1000 / 60);
-
-  update();
-  draw();
-  requestAnimationFrame(gameLoop);
-}
+function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
 reset(); gameLoop();
 </script>
 </body>
