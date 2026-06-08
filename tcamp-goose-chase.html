@@ -508,7 +508,7 @@ function drawCrab(cx, cy, cw, ch, onGround, sliding, stumble, runFrame, pitFalli
   const effCY = effY + effH / 2;
   const effCX = cx + effW / 2;
   const shellRX = effW / 2 - 1;
-  const shellRY = sliding ? effH / 2 - 1 : effH / 2 - 2;
+  const shellRY = sliding ? effH / 2 - 1 : effH * 0.32; // flat crab, not round
 
   // --- Leg animation (8 legs) ---
   const legPhase = runFrame * 0.3;
