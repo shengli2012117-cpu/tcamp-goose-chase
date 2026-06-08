@@ -23,6 +23,13 @@ const SPEED_CAP = 3.4;
 const SPAWN_AHEAD = 1200;
 const DESPAWN_BEHIND = 800;
 
+// --- Goose armor image ---
+const GOOSE_IMG = new Image();
+GOOSE_IMG.src = 'https://static.tcamp.qq.com/gallery/prod/2026/6/8/f3574b6b86122000/9d2cb2c8-d904-435c-a34e-245994759471.webp';
+let gooseImgLoaded = false;
+GOOSE_IMG.onload = function() { gooseImgLoaded = true; };
+GOOSE_IMG.onerror = function() { gooseImgLoaded = false; };
+
 // --- Game state ---
 let player, goose, camera, gameState, countdownTimer;
 let obstacles = [], coins = [];
@@ -574,57 +581,101 @@ function draw() {
     ctx.fillStyle = '#b8860b'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center'; ctx.fillText('$', cx, cy + 3);
   }
 
-  // Goose — on-screen
+  // Goose — on-screen (armored warrior goose)
   const gooseScreenX = goose.x - camera.x;
-  if (gooseScreenX > -60 && gooseScreenX < W + 40) {
-    const gx = goose.x, gy = GROUND_Y - GOOSE_SIZE, gw = GOOSE_SIZE, gh = GOOSE_SIZE;
+  if (gooseScreenX > -80 && gooseScreenX < W + 60) {
     const gDist = player.x - goose.x, angry = gDist < 120;
-    ctx.shadowColor = '#ff4444'; ctx.shadowBlur = angry ? 28 : 16;
-    ctx.fillStyle = angry ? '#d32f2f' : '#e53935'; ctx.fillRect(gx, gy, gw, gh);
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = '#ff6666'; ctx.lineWidth = 3; ctx.strokeRect(gx, gy, gw, gh);
-    ctx.fillStyle = '#fff'; ctx.fillRect(gx + 7, gy + 7, 8, 8); ctx.fillRect(gx + 21, gy + 7, 8, 8);
-    ctx.fillStyle = '#000';
-    const eyeX = angry ? 3 : 0;
-    ctx.fillRect(gx + 10 + eyeX, gy + 10, 4, 4); ctx.fillRect(gx + 24 + eyeX, gy + 10, 4, 4);
-    ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(gx + 7, gy + (angry ? 4 : 5)); ctx.lineTo(gx + 15, gy + 8); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(gx + 29, gy + (angry ? 4 : 5)); ctx.lineTo(gx + 21, gy + 8); ctx.stroke();
-    ctx.fillStyle = angry ? '#f44336' : '#ff9800';
-    ctx.beginPath(); ctx.moveTo(gx + 36, gy + 13); ctx.lineTo(gx + (angry ? 54 : 50), gy + 18); ctx.lineTo(gx + 36, gy + 23); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center'; ctx.fillText('TCAMP', gx + gw/2, gy - 4);
+    const gw = angry ? 48 : 44, gh = angry ? 46 : 42;
+    // Heavy armor bounce — bounce harder when angry
+    const bounceAmp = angry ? 6 : 4;
+    const bounce = Math.abs(Math.sin(player.runFrame * 0.2)) * bounceAmp;
+    const gx = goose.x - (angry ? 6 : 4);
+    const gy = GROUND_Y - gh - bounce;
+
+    ctx.save();
+    // Angry slash: rotate around center with rapid oscillation
     if (angry) {
-      ctx.strokeStyle = '#ff444488'; ctx.lineWidth = 1;
-      for (let l = 0; l < 3; l++) { const lx = gx - 8 - l * 6; ctx.beginPath(); ctx.moveTo(lx, gy); ctx.lineTo(lx - 10, gy); ctx.stroke(); ctx.beginPath(); ctx.moveTo(lx, gy + gh); ctx.lineTo(lx - 10, gy + gh); ctx.stroke(); }
+      const slashAngle = Math.sin(Date.now() * 0.04) * 0.12; // ±7°
+      const cx = gx + gw / 2, cy = gy + gh / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate(slashAngle);
+      ctx.translate(-cx, -cy);
     }
+
+    if (gooseImgLoaded) {
+      // Red glow shadow when angry
+      if (angry) {
+        ctx.shadowColor = '#ff2200';
+        ctx.shadowBlur = 32;
+      }
+      ctx.drawImage(GOOSE_IMG, gx, gy, gw, gh);
+      ctx.shadowBlur = 0;
+    } else {
+      // Fallback: red armored block
+      ctx.shadowColor = '#ff4444'; ctx.shadowBlur = angry ? 28 : 16;
+      ctx.fillStyle = angry ? '#d32f2f' : '#e53935'; ctx.fillRect(gx, gy, gw, gh);
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#5588cc'; ctx.lineWidth = 3; ctx.strokeRect(gx, gy, gw, gh);
+      ctx.fillStyle = '#fff'; ctx.fillRect(gx + 7, gy + 7, 8, 8); ctx.fillRect(gx + 21, gy + 7, 8, 8);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(gx + 10 + (angry ? 3 : 0), gy + 10, 4, 4); ctx.fillRect(gx + 24 + (angry ? 3 : 0), gy + 10, 4, 4);
+      ctx.fillStyle = '#ff9800';
+      ctx.beginPath(); ctx.moveTo(gx + 36, gy + 13); ctx.lineTo(gx + (angry ? 54 : 50), gy + 18); ctx.lineTo(gx + 36, gy + 23); ctx.fill();
+    }
+
+    // Label above
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(angry ? '⚔ TCAMP ⚔' : 'TCAMP', gx + gw/2, gy - 6);
+
+    // Angry: flame jets under feet
+    if (angry) {
+      ctx.fillStyle = '#ff4400';
+      for (let f = 0; f < 4; f++) {
+        const fx = gx + 8 + f * (gw - 16) / 3;
+        const fy = gy + gh - 2;
+        const fh = 6 + Math.sin(Date.now() * 0.03 + f) * 4;
+        ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(fx + 5, fy + fh + Math.random() * 4); ctx.lineTo(fx + 10, fy); ctx.fill();
+      }
+    }
+
+    ctx.restore();
   }
 
-  // Off-screen goose indicator (left edge) — drawn in world space
+  // Off-screen goose indicator (left edge) — head portrait
   if (gooseScreenX < -20 && gooseScreenX > -800) {
     const gapOff = Math.floor(player.x - goose.x);
     const offAlpha = Math.min(1, Math.abs(gooseScreenX + 60) / 200);
-    // Pill drawn at fixed screen position: x=2 screen, so worldX = camera.x + 2
-    const px = camera.x + 2, py = GROUND_Y - 58, pw = 90, ph = 48;
+    const px = camera.x + 2, py = GROUND_Y - 60, pw = 100, ph = 52;
+    // Background pill
     ctx.fillStyle = 'rgba(40,0,0,' + (0.5 + offAlpha * 0.5) + ')';
     ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 8); ctx.fill();
     ctx.strokeStyle = 'rgba(255,68,68,' + (0.6 + offAlpha * 0.4) + ')';
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 8); ctx.stroke();
-    // Tiny goose icon
-    ctx.fillStyle = '#e53935';
-    ctx.fillRect(px + 10, py + 10, 18, 18);
-    ctx.fillStyle = '#fff'; ctx.fillRect(px + 14, py + 13, 5, 5); ctx.fillRect(px + 20, py + 13, 5, 5);
-    ctx.fillStyle = '#000'; ctx.fillRect(px + 16, py + 15, 2, 2); ctx.fillRect(px + 22, py + 15, 2, 2);
-    ctx.fillStyle = '#ff9800';
-    ctx.beginPath(); ctx.moveTo(px + 28, py + 16); ctx.lineTo(px + 33, py + 19); ctx.lineTo(px + 28, py + 22); ctx.fill();
-    // Distance text
+    // Cropped goose head portrait
+    if (gooseImgLoaded) {
+      // Source: crop top-left portion of the goose image (head area)
+      // GOOSE_IMG is roughly 1:1 aspect, so head is top ~55%
+      const srcW = GOOSE_IMG.naturalWidth || 200;
+      const srcH = GOOSE_IMG.naturalHeight || 200;
+      const headH = srcH * 0.55;
+      ctx.drawImage(GOOSE_IMG, 0, 0, srcW, headH, px + 6, py + 4, 36, 36);
+    } else {
+      // Fallback: tiny red goose face
+      ctx.fillStyle = '#e53935'; ctx.fillRect(px + 12, py + 10, 24, 24);
+      ctx.fillStyle = '#fff'; ctx.fillRect(px + 16, py + 14, 7, 7); ctx.fillRect(px + 26, py + 14, 7, 7);
+      ctx.fillStyle = '#000'; ctx.fillRect(px + 18, py + 17, 3, 3); ctx.fillRect(px + 28, py + 17, 3, 3);
+      ctx.fillStyle = '#ff9800';
+      ctx.beginPath(); ctx.moveTo(px + 36, py + 18); ctx.lineTo(px + 42, py + 22); ctx.lineTo(px + 36, py + 26); ctx.fill();
+    }
+    // Distance
     ctx.fillStyle = '#ff4444';
     ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center';
     const distLabel = gapOff >= 1000 ? (gapOff/1000).toFixed(1) + 'km' : gapOff + 'm';
-    ctx.fillText(distLabel, px + pw/2 + 25, py + 19);
+    ctx.fillText(distLabel, px + pw/2 + 22, py + 20);
     ctx.fillStyle = '#ff666688';
     ctx.font = '9px monospace';
-    ctx.fillText('←', px + pw/2 + 25, py + 34);
+    ctx.fillText('←', px + pw/2 + 22, py + 36);
   }
 
   // Player
