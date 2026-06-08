@@ -30,6 +30,23 @@ let gooseImgLoaded = false;
 GOOSE_IMG.onload = function() { gooseImgLoaded = true; };
 GOOSE_IMG.onerror = function() { gooseImgLoaded = false; };
 
+// --- Audio ---
+const AUDIO_URLS = {
+  bgm: 'https://static.tcamp.qq.com/gallery/prod/2026/6/8/f3574b6b86122000/c0518442-3b16-49ce-abed-a999c7b6ef9e.mp3',
+  jump: 'https://actions.google.com/sounds/v1/cartoon/cartoon_boing.ogg',
+  coin: 'https://actions.google.com/sounds/v1/cartoon/slide_whistle_to_drum.ogg'
+};
+let bgm = null;
+try { bgm = new Audio(AUDIO_URLS.bgm); bgm.loop = true; bgm.volume = 0.45; } catch(e) { bgm = null; }
+
+function playSFX(url) {
+  try {
+    const s = new Audio(url);
+    s.volume = 0.5;
+    s.play().catch(function() {});
+  } catch(e) {}
+}
+
 // --- Game state ---
 let player, goose, camera, gameState, countdownTimer;
 let obstacles = [], coins = [];
@@ -117,6 +134,7 @@ function spawnCoinsForObstacles(obs, isReward) {
 
 // ===================== RESET =====================
 function reset() {
+  try { if (bgm) { bgm.pause(); bgm.currentTime = 0; bgm.playbackRate = 1.0; } } catch(e) {}
   playerSpeed = BASE_SPEED;
   player = {
     x: 100, y: GROUND_Y - PLAYER_SIZE, w: PLAYER_SIZE, h: PLAYER_SIZE,
@@ -226,7 +244,7 @@ function update() {
   for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life--; if (p.life <= 0) particles.splice(i, 1); }
   for (let i = popups.length - 1; i >= 0; i--) { const p = popups[i]; p.y += p.vy; p.life--; if (p.life <= 0) popups.splice(i, 1); }
 
-  if (gameState === 'countdown') { countdownTimer--; if (countdownTimer <= 0) gameState = 'playing'; return; }
+  if (gameState === 'countdown') { countdownTimer--; if (countdownTimer <= 0) { gameState = 'playing'; try { if (bgm) bgm.play().catch(function(){}); } catch(e) {} } return; }
   if (gameState !== 'playing') return;
 
   // ---- Speed ramp: +0.12 every 500m, no cap ----
@@ -286,6 +304,7 @@ function update() {
     player.vy = power; player.onGround = false; player.coyoteTimer = 0;
     player.doubleJumped = (player.jumpsUsed === 1);
     player.jumpHeld = true; player.jumpsUsed++; jumpRequested--;
+    playSFX(AUDIO_URLS.jump);
     if (player.jumpsUsed === 2) {
       spawnParticles(player.x + player.w/2, player.y + player.h, '#fff', 12);
       addPopup(player.x, player.y - 20, '二段跳!', '#90caf9');
@@ -329,6 +348,7 @@ function update() {
     if (collides(player, cBox)) {
       coin.collected = true; coinScore += 10; coinCount++;
       runStats.coinsCollected++;
+      playSFX(AUDIO_URLS.coin);
       addPopup(coin.x, coin.y - 10, '+10', '#ffcc00');
       spawnParticles(coin.x, coin.y, '#ffd700', 6);
     }
@@ -453,10 +473,17 @@ function update() {
 
   screenShake = gooseDist < 100 ? Math.min(10, 100 - gooseDist) : Math.max(0, screenShake - 0.5);
 
+  // BGM dynamic rate: speeds up when goose is close (<120m), recovers slowly
+  if (bgm && gameState === 'playing') {
+    const targetRate = gooseDist < 120 ? 1.25 : 1.0;
+    bgm.playbackRate += (targetRate - bgm.playbackRate) * 0.08;
+  }
+
   if (gooseDist < 8) { spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 50); saveHighScore(); gameState = 'over'; return; }
 }
 
 function saveHighScore() {
+  try { if (bgm) { bgm.pause(); bgm.playbackRate = 1.0; } } catch(e) {}
   runStats.dist = distanceScore;
   if (score > highScore) { highScore = score; try { localStorage.setItem('tcampHighScore', highScore); } catch(e) {} }
   // If run was too short, just show simple over screen
