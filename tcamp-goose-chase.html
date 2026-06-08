@@ -543,11 +543,9 @@ function drawCrab(cx, cy, cw, ch, onGround, sliding, stumble, runFrame, pitFalli
   ctx.ellipse(effCX - shellRX * 0.2, effCY - shellRY * 0.25, shellRX * 0.45, shellRY * 0.35, -0.3, 0, Math.PI * 2);
   ctx.fill();
 
-  // --- Claws ---
-  const clawX = cx - 6;
+  // --- Claws (big & prominent) ---
+  const clawSize = sliding ? 10 : 16;
   const clawBaseY = effCY;
-  const clawSize = sliding ? 6 : 9;
-  // Combo celebration: claws go golden and wiggle rapidly
   const comboWave = hasComboFx ? Math.abs(Math.sin(Date.now() * 0.015)) : 1;
   const clawColor = hasComboFx
     ? (Math.sin(Date.now() * 0.02) > 0 ? '#ffcc00' : '#ffdd44')
@@ -556,33 +554,47 @@ function drawCrab(cx, cy, cw, ch, onGround, sliding, stumble, runFrame, pitFalli
 
   for (let cSide = 0; cSide < 2; cSide++) {
     const cxDir = cSide === 0 ? -1 : 1;
-    const cxBaseX = cx + (cSide === 0 ? -2 : effW + 2);
-    const armLen = clawSize * (0.8 + comboWave * 0.3);
+    const cxBaseX = cx + (cSide === 0 ? -6 : effW + 6);
+    const armLen = clawSize * (0.8 + comboWave * 0.4);
 
     ctx.save();
     ctx.translate(cxBaseX, clawBaseY);
     ctx.rotate(clawAngle * cxDir);
 
-    // Arm
-    ctx.strokeStyle = clawColor; ctx.lineWidth = 3;
+    // Thick arm
+    ctx.strokeStyle = clawColor; ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.moveTo(0, 0);
-    ctx.lineTo(cxDir * armLen * 0.6, -armLen * 0.3);
+    ctx.lineTo(cxDir * armLen * 0.7, -armLen * 0.2);
+    ctx.stroke();
+    // Secondary arm line for thickness
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, -2);
+    ctx.lineTo(cxDir * armLen * 0.7, -armLen * 0.2 - 2);
     ctx.stroke();
 
-    // Pincer — upper
+    // Giant pincer — upper jaw
+    ctx.fillStyle = clawColor;
+    ctx.strokeStyle = '#993300'; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cxDir * armLen * 0.65, -armLen * 0.2);
+    ctx.quadraticCurveTo(cxDir * armLen * 1.0, -armLen * 0.7, cxDir * armLen * 1.6, -armLen * 1.1);
+    ctx.quadraticCurveTo(cxDir * armLen * 1.2, -armLen * 0.3, cxDir * armLen * 1.0, -armLen * 0.0);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    // Giant pincer — lower jaw
+    ctx.beginPath();
+    ctx.moveTo(cxDir * armLen * 0.65, -armLen * 0.2);
+    ctx.quadraticCurveTo(cxDir * armLen * 1.0, -armLen * 0.5, cxDir * armLen * 1.6, -armLen * 0.2);
+    ctx.quadraticCurveTo(cxDir * armLen * 1.2, -armLen * 0.1, cxDir * armLen * 1.0, -armLen * 0.0);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    // Claw joint bulge
     ctx.fillStyle = clawColor;
     ctx.beginPath();
-    ctx.moveTo(cxDir * armLen * 0.6, -armLen * 0.3);
-    ctx.lineTo(cxDir * armLen * 1.2, -armLen * 1.0);
-    ctx.lineTo(cxDir * armLen * 0.9, -armLen * 0.1);
-    ctx.closePath(); ctx.fill();
-    // Pincer — lower
-    ctx.beginPath();
-    ctx.moveTo(cxDir * armLen * 0.6, -armLen * 0.3);
-    ctx.lineTo(cxDir * armLen * 1.2, -armLen * 0.0);
-    ctx.lineTo(cxDir * armLen * 0.9, -armLen * 0.5);
-    ctx.closePath(); ctx.fill();
+    ctx.arc(cxDir * armLen * 0.6, -armLen * 0.2, 4, 0, Math.PI * 2);
+    ctx.fill();
 
     ctx.restore();
   }
