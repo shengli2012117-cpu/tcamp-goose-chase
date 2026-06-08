@@ -480,6 +480,144 @@ function submitLeaderboard() {
   leaderboardState = 'shown';
 }
 
+// ===================== CRAB DRAWING =====================
+function drawCrab(cx, cy, cw, ch, onGround, sliding, stumble, runFrame, pitFalling, jumpsUsed, hasComboFx) {
+  const pitFade = pitFalling > 0 ? (pitFalling / 45) : 1;
+  ctx.globalAlpha = pitFade;
+
+  // --- Pit falling: shrinking crab ---
+  if (pitFalling > 0) {
+    const s = 0.5 + pitFade * 0.5;
+    const fx = cx + cw * (1 - s) / 2;
+    const fy = cy + ch * (1 - s);
+    // Shell
+    ctx.fillStyle = '#993333'; ctx.beginPath(); ctx.ellipse(fx + cw/2*s, fy + ch/2*s, cw/2*s, ch/2*s, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#ff444488'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('😱', cx + cw / 2, cy + ch / 2 + 6);
+    ctx.globalAlpha = 1;
+    return;
+  }
+
+  // --- Base positions ---
+  const bobY = onGround ? Math.abs(Math.sin(runFrame * 0.25)) * 2 : 0;
+  const stBob = stumble > 0 ? Math.abs(Math.sin(stumble * 0.5)) * 6 : 0;
+  const stumbleFlash = stumble > 0 && Math.floor(stumble / 4) % 2 === 0;
+  const effY = cy - bobY - stBob;
+  const effH = sliding ? 14 : ch;
+  const effW = sliding ? cw + 8 : cw;
+  const effCY = effY + effH / 2;
+  const effCX = cx + effW / 2;
+  const shellRX = effW / 2 - 1;
+  const shellRY = sliding ? effH / 2 - 1 : effH / 2 - 2;
+
+  // --- Leg animation (8 legs) ---
+  const legPhase = runFrame * 0.3;
+  const legBaseY = effY + effH - 2;
+  for (let side = 0; side < 2; side++) {
+    const legDir = side === 0 ? 1 : -1;
+    for (let l = 0; l < 4; l++) {
+      const lx = cx + 4 + l * (effW - 8) / 3;
+      const swing = Math.sin(legPhase + l * 0.8 + side * Math.PI) * 4;
+      const ly = legBaseY;
+      ctx.strokeStyle = '#cc3300'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(lx, ly - 2);
+      ctx.lineTo(lx + legDir * (4 + swing * 0.5), ly + 4 + Math.abs(swing));
+      ctx.stroke();
+    }
+  }
+
+  // --- Shell body ---
+  const shellColor = (stumbleFlash && !sliding) ? '#ffaa66' : (hasComboFx ? '#ff5533' : '#dd3333');
+  const shellStroke = (stumbleFlash && !sliding) ? '#ffcc88' : '#cc2222';
+  ctx.fillStyle = shellColor;
+  ctx.strokeStyle = shellStroke; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(effCX, effCY, shellRX, shellRY, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // --- Shell highlight ---
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  ctx.beginPath();
+  ctx.ellipse(effCX - shellRX * 0.2, effCY - shellRY * 0.25, shellRX * 0.45, shellRY * 0.35, -0.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // --- Claws ---
+  const clawX = cx - 6;
+  const clawBaseY = effCY;
+  const clawSize = sliding ? 6 : 9;
+  // Combo celebration: claws go golden and wiggle rapidly
+  const comboWave = hasComboFx ? Math.abs(Math.sin(Date.now() * 0.015)) : 1;
+  const clawColor = hasComboFx
+    ? (Math.sin(Date.now() * 0.02) > 0 ? '#ffcc00' : '#ffdd44')
+    : '#ee4400';
+  const clawAngle = hasComboFx ? Math.sin(Date.now() * 0.025) * 1.2 : Math.sin(runFrame * 0.2) * 0.4;
+
+  for (let cSide = 0; cSide < 2; cSide++) {
+    const cxDir = cSide === 0 ? -1 : 1;
+    const cxBaseX = cx + (cSide === 0 ? -2 : effW + 2);
+    const armLen = clawSize * (0.8 + comboWave * 0.3);
+
+    ctx.save();
+    ctx.translate(cxBaseX, clawBaseY);
+    ctx.rotate(clawAngle * cxDir);
+
+    // Arm
+    ctx.strokeStyle = clawColor; ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(cxDir * armLen * 0.6, -armLen * 0.3);
+    ctx.stroke();
+
+    // Pincer — upper
+    ctx.fillStyle = clawColor;
+    ctx.beginPath();
+    ctx.moveTo(cxDir * armLen * 0.6, -armLen * 0.3);
+    ctx.lineTo(cxDir * armLen * 1.2, -armLen * 1.0);
+    ctx.lineTo(cxDir * armLen * 0.9, -armLen * 0.1);
+    ctx.closePath(); ctx.fill();
+    // Pincer — lower
+    ctx.beginPath();
+    ctx.moveTo(cxDir * armLen * 0.6, -armLen * 0.3);
+    ctx.lineTo(cxDir * armLen * 1.2, -armLen * 0.0);
+    ctx.lineTo(cxDir * armLen * 0.9, -armLen * 0.5);
+    ctx.closePath(); ctx.fill();
+
+    ctx.restore();
+  }
+
+  // --- Eye stalks ---
+  for (let eSide = 0; eSide < 2; eSide++) {
+    const ex = effCX + (eSide === 0 ? -6 : 6);
+    const stalkTop = effCY - shellRY + (sliding ? 10 : 2);
+    const exY = effCY - shellRY - (sliding ? 2 : 10);
+
+    // Stalk
+    ctx.strokeStyle = '#cc3300'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(ex, stalkTop); ctx.lineTo(ex, exY); ctx.stroke();
+
+    // Eyeball
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(ex, exY - 3, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(ex, exY - 3, 4, 0, Math.PI * 2); ctx.stroke();
+
+    if (stumble > 0 && stumbleFlash) {
+      // X eyes (dizzy)
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(ex - 3, exY - 6); ctx.lineTo(ex + 3, exY); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ex + 3, exY - 6); ctx.lineTo(ex - 3, exY); ctx.stroke();
+    } else {
+      // Normal pupil
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.arc(ex + 1, exY - 3, 2, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  ctx.globalAlpha = 1;
+}
+
 // ===================== RENDER =====================
 function draw() {
   ctx.clearRect(0, 0, W, H);
@@ -678,42 +816,12 @@ function draw() {
     ctx.fillText('←', px + pw/2 + 22, py + 36);
   }
 
-  // Player
-  const pitFade = player.pitFalling > 0 ? (player.pitFalling / 45) : 1;
-  ctx.globalAlpha = pitFade;
-  if (player.pitFalling > 0) {
-    const s = 0.5 + pitFade * 0.5, fx = player.x + player.w * (1 - s) / 2, fy = player.y + player.h * (1 - s);
-    ctx.fillStyle = '#555'; ctx.fillRect(fx, fy, player.w * s, player.h * s);
-    ctx.fillStyle = '#ff444488'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'; ctx.fillText('😱', player.x + player.w / 2, player.y + player.h / 2 + 6);
-  } else if (player.sliding) {
-    const slideY = GROUND_Y - 16;
-    ctx.fillStyle = '#ffffff44'; ctx.fillRect(player.x - 4, slideY + 10, 8, 6); ctx.fillRect(player.x + player.w - 4, slideY + 10, 8, 6);
-    ctx.fillStyle = '#42a5f5'; ctx.fillRect(player.x, slideY, player.w + 6, 14);
-    ctx.strokeStyle = '#90caf9'; ctx.lineWidth = 2; ctx.strokeRect(player.x, slideY, player.w + 6, 14);
-    ctx.fillStyle = '#fff'; ctx.fillRect(player.x + 3, slideY + 2, 7, 7); ctx.fillRect(player.x + 20, slideY + 2, 7, 7);
-    ctx.fillStyle = '#000'; ctx.fillRect(player.x + 5, slideY + 4, 3, 3); ctx.fillRect(player.x + 22, slideY + 4, 3, 3);
-    ctx.fillStyle = '#42a5f544'; ctx.fillRect(player.x - 16, slideY + 4, 16, 6);
-  } else {
-    const stumbleFlash = player.stumble > 0 && Math.floor(player.stumble / 4) % 2 === 0;
-    const bobY = player.onGround ? Math.abs(Math.sin(player.runFrame * 0.25)) * 3 : 0;
-    const stBob = player.stumble > 0 ? Math.abs(Math.sin(player.stumble * 0.5)) * 8 : 0;
-    const pColor = stumbleFlash ? '#ff8844' : '#42a5f5', pStroke = stumbleFlash ? '#ffaa66' : '#90caf9';
-    ctx.fillStyle = pColor; ctx.fillRect(player.x, player.y - bobY - stBob, player.w, player.h);
-    ctx.strokeStyle = pStroke; ctx.lineWidth = 3; ctx.strokeRect(player.x, player.y - bobY - stBob, player.w, player.h);
-    if (player.stumble > 0 && stumbleFlash) {
-      ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(player.x + 5, player.y + 7); ctx.lineTo(player.x + 13, player.y + 15); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(player.x + 13, player.y + 7); ctx.lineTo(player.x + 5, player.y + 15); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(player.x + 19, player.y + 7); ctx.lineTo(player.x + 27, player.y + 15); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(player.x + 27, player.y + 7); ctx.lineTo(player.x + 19, player.y + 15); ctx.stroke();
-    } else {
-      ctx.fillStyle = '#fff'; ctx.fillRect(player.x + 5, player.y + 7 - bobY - stBob, 8, 8); ctx.fillRect(player.x + 19, player.y + 7 - bobY - stBob, 8, 8);
-      ctx.fillStyle = '#000'; ctx.fillRect(player.x + 8, player.y + 10 - bobY - stBob, 4, 4); ctx.fillRect(player.x + 22, player.y + 10 - bobY - stBob, 4, 4);
-    }
-    if (player.stumble <= 0) { ctx.fillStyle = '#1565c0'; ctx.fillRect(player.x + 2, player.y - 7 - bobY, 28, 10); ctx.fillStyle = '#0d47a1'; ctx.fillRect(player.x + 18, player.y - 1 - bobY, 12, 4); }
-    if (!player.onGround && player.jumpsUsed === 1) { ctx.fillStyle = '#ffffff66'; ctx.fillRect(player.x + 10, player.y - bobY + player.h + 4, 12, 4); }
-  }
-  ctx.globalAlpha = 1;
+  // ===== Player: Red Crab =====
+  drawCrab(
+    player.x, player.y, player.w, player.h,
+    player.onGround, player.sliding, player.stumble, player.runFrame,
+    player.pitFalling, player.jumpsUsed, !!comboFx
+  );
 
   // Trail
   for (const tp of trailParticles) { ctx.globalAlpha = tp.life / 26; ctx.fillStyle = '#90caf9'; ctx.fillRect(tp.x - tp.size/2, tp.y - tp.size/2, tp.size, tp.size); } ctx.globalAlpha = 1;
