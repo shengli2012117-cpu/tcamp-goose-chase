@@ -1397,11 +1397,11 @@ function drawGameOver() {
 // ===================== FIXED-TIMESTEP GAME LOOP =====================
 let lastTime = performance.now();
 let accumulator = 0;
-const FIXED_TIMESTEP = 1000 / 60; // strictly 60 physics updates per second
+const FIXED_TIMESTEP = 16.666666; // high-precision 60Hz lock
 
 function gameLoop() {
-  var currentTime = performance.now();
-  var deltaTime = currentTime - lastTime;
+  const currentTime = performance.now();
+  let deltaTime = currentTime - lastTime;
   lastTime = currentTime;
 
   // Prevent death-spiral from tab-switch or extreme lag spikes
@@ -1409,11 +1409,15 @@ function gameLoop() {
 
   accumulator += deltaTime;
 
-  // Physics updates locked to real-world time, independent of frame rate jitter
-  while (accumulator >= FIXED_TIMESTEP) {
+  // 0.1ms tolerance margin ensures stable update triggering
+  // even with minor 60Hz refresh jitter
+  while (accumulator >= (FIXED_TIMESTEP - 0.1)) {
     update();
     accumulator -= FIXED_TIMESTEP;
   }
+
+  // Safety clamp — prevent runaway negative accumulator
+  if (accumulator < 0) accumulator = 0;
 
   draw();
   requestAnimationFrame(gameLoop);
